@@ -119,6 +119,12 @@ a.btn{text-decoration:none}
 .ov-steps li.done{color:var(--text)}
 .ov-steps li.done::before{background:var(--accent);border-color:var(--accent)}
 .ov-foot{margin-top:16px;text-align:right}
+.ov-spin-wrap{display:flex;flex-direction:column;align-items:center;text-align:center}
+.ov-spinner{width:64px;height:64px;border-radius:50%;border:6px solid var(--line);border-top-color:var(--accent);animation:spin .9s linear infinite;margin:6px 0 18px}
+.ov-spin-wrap .ov-steps{align-self:stretch;text-align:left}
+.ov-spin-wrap .bar{align-self:stretch}
+.spin-sm{width:44px;height:44px;border-radius:50%;border:5px solid var(--line);border-top-color:var(--accent);animation:spin .9s linear infinite;flex:none}
+@media (prefers-reduced-motion: reduce){.ov-spinner,.spin-sm{animation-duration:2.4s}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion: reduce){.ov-steps li.on::before{animation:none}}
 
@@ -263,12 +269,10 @@ footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);text-al
 
         <div id="pProg" hidden aria-busy="true">
           <div class="proc-wrap">
-            <div class="sk phone"></div>
+            <div class="spin-sm" aria-hidden="true"></div>
             <div>
-              <div class="sk sk-title"></div>
               <div class="bar"><i id="pBar"></i></div>
               <div class="muted" id="pTxt" role="status">Menyiapkan</div>
-              <div class="sk sk-line" style="margin-top:16px"></div><div class="sk sk-line" style="width:70%"></div>
             </div>
           </div>
         </div>
@@ -395,21 +399,16 @@ footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);text-al
 <div id="procOverlay" class="ov" hidden role="dialog" aria-modal="true" aria-labelledby="ovTitle">
   <div class="ov-card">
     <div class="ov-head"><strong id="ovTitle">Memproses video</strong><span id="ovPct">0%</span></div>
-    <div class="ov-body">
-      <div class="ov-prev">
-        <div class="sk phone-lg" id="ovSk"></div>
-        <canvas id="ovCanvas" width="270" height="480" hidden></canvas>
-      </div>
-      <div class="ov-side">
-        <ol class="ov-steps" id="ovSteps">
-          <li>Membaca video</li>
-          <li>Menyesuaikan ke 1080 x 1920</li>
-          <li>Encode video dan audio</li>
-          <li>Menyelesaikan file</li>
-        </ol>
-        <div class="bar"><i id="ovBar"></i></div>
-        <div class="muted" id="ovTxt" role="status">Menyiapkan</div>
-      </div>
+    <div class="ov-spin-wrap">
+      <div class="ov-spinner" aria-hidden="true"></div>
+      <ol class="ov-steps" id="ovSteps">
+        <li>Membaca video</li>
+        <li>Menyesuaikan ke 1080 x 1920</li>
+        <li>Encode video dan audio</li>
+        <li>Menyelesaikan file</li>
+      </ol>
+      <div class="bar"><i id="ovBar"></i></div>
+      <div class="muted" id="ovTxt" role="status">Menyiapkan</div>
     </div>
     <div class="ov-foot"><button class="btn ghost" id="ovCancel" type="button">Batalkan</button></div>
   </div>
@@ -518,18 +517,18 @@ footer{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);text-al
   function setBar(p,t){ $('pBar').style.width=Math.max(0,Math.min(100,p))+'%'; $('pTxt').textContent=t; }
 
   // tampilan layar penuh saat proses
-  var cancelFn=null, ovFirst=true, ovCx=null, ovTick=0, ovLastT=0;
+  var cancelFn=null, ovLastT=0;
   function ovStep(n){ var li=$('ovSteps').children; for(var i=0;i<li.length;i++){ li[i].className = i<n?'done':(i===n?'on':''); } }
   function ovPct(p){ var r=Math.round(Math.max(0,Math.min(100,p))); $('ovPct').textContent=r+'%'; $('ovBar').style.width=r+'%'; }
   function ovOpen(){
-    ovFirst=true; ovTick=0; ovLastT=0; $('ovSk').hidden=false; $('ovCanvas').hidden=true; $('ovTxt').textContent='Menyiapkan';
+    ovLastT=0; $('ovTxt').textContent='Menyiapkan';
     ovStep(0); ovPct(0); $('procOverlay').hidden=false; document.body.style.overflow='hidden'; $('ovCancel').focus();
   }
   function ovClose(){ $('procOverlay').hidden=true; document.body.style.overflow=''; }
   function ovFrame(src,p,left){
-    if(ovFirst){ ovFirst=false; ovStep(2); $('ovSk').hidden=true; $('ovCanvas').hidden=false; ovCx=$('ovCanvas').getContext('2d'); }
+    // hanya spinner dan persentase: tidak ada gambar pratinjau yang digambar,
+    // sehingga tidak ada beban tambahan yang mengganggu proses encode
     var nowT=performance.now(); if(nowT-ovLastT<250) return; ovLastT=nowT;
-    ovCx.drawImage(src,0,0,270,480);
     ovPct(p); $('ovTxt').textContent='Sisa sekitar '+left+' detik. Jangan pindah tab.';
   }
   $('ovCancel').addEventListener('click',function(){ if(cancelFn) cancelFn(); });
