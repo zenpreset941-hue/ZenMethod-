@@ -68,6 +68,7 @@ input[type=url]:focus{border-color:var(--gold)}
 .file small{color:var(--mut);display:block;margin-top:4px}.file em{color:var(--gold);font-style:normal;font-weight:700}
 .remind{border:1px solid var(--line);background:#17140c;border-radius:18px;padding:20px;margin-top:20px;text-align:left}
 .remind h3{margin:10px 0}.remind ul{padding-left:20px;color:#bbb;line-height:1.8}.remind b{color:var(--gold2)}
+.codec{display:flex;justify-content:space-between;align-items:center;margin-top:22px;gap:10px;color:var(--mut);font-size:14px}.codec div{display:flex;gap:8px}.codec button{background:#1b1b1e;border:1px solid #2c2c30;color:#ccc;border-radius:12px;padding:12px 14px;font-weight:700;cursor:pointer}.codec button.on{background:var(--gold);color:#111;border-color:var(--gold)}
 .err{color:#ff8a8a;margin-top:14px;font-size:14px;display:none}
 video,canvas{display:none}
 </style>
@@ -76,7 +77,7 @@ video,canvas{display:none}
 <body>
 <div class="wrap">
   <header>
-    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v2</small></span></div>
+    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v3</small></span></div>
     <span style="font-size:26px">&#9776;</span>
   </header>
   <div class="steps" id="steps"></div>
@@ -92,7 +93,7 @@ const METHODS = {
   fps:{name:"FPS Method",tag:"FPS",desc:"Untuk ponsel saat kamu hanya butuh patch FPS. Tidak termasuk metode kualitas.",h:0,fps:60,br:9e6},
   p720:{name:"720p60 Method",tag:"720p60",desc:"Render ulang ke 720p 60 FPS dengan bitrate stabil.",h:720,fps:60,br:7e6}
 };
-const S = {step:1, file:null, url:"", method:"max", engine:"Editing News", extra:null, quota:6, progress:0, out:null, err:""};
+const S = {step:1, file:null, url:"", method:"max", engine:"Editing News", extra:null, codec:"avc", quota:6, progress:0, out:null, err:""};
 const $ = s => document.querySelector(s);
 
 function renderSteps(){
@@ -145,12 +146,14 @@ function view(){
         <div class="row"><div class="radio"></div><div><h3>${m.name}</h3>${m.rec?'<span class="badge">VERSI BARU</span>':''}<p>${m.desc}</p></div></div>
         <div class="foot"><button class="tut" data-t="${k}">Lihat tutorial &#9654;</button>${m.rec?`<span class="left">${S.quota} DARI 6 TERSISA</span>`:''}</div>
       </div>`).join("")}
+      <div class="codec"><span>Codec video</span><div><button data-c="avc" class="${S.codec==="avc"?"on":""}">H.264</button><button data-c="hevc" class="${S.codec==="hevc"?"on":""}">HEVC (H.265)</button></div></div>
       <button class="btn" id="start">Mulai proses <span>&rarr;</span></button>
       <button class="btn ghost" id="back">Kembali</button>
     </section>`;
     document.querySelectorAll(".opt").forEach(o=>o.onclick=()=>{S.method=o.dataset.k;view()});
     document.querySelectorAll(".tut").forEach(b=>b.onclick=e=>{e.stopPropagation();alert("Tutorial untuk "+METHODS[b.dataset.t].name+":\n1. Pilih video\n2. Pilih metode\n3. Tunggu render selesai\n4. Unduh hasilnya")});
     $("#back").onclick=()=>{S.step=1;view()};
+    document.querySelectorAll(".codec button").forEach(b=>b.onclick=()=>{S.codec=b.dataset.c;view()});
     $("#start").onclick=()=>{ if(S.method==="max") openEngine(); else {S.extra=null; process();} };
   }
   if(S.step===3){
@@ -205,123 +208,128 @@ function openPrepare(){
   $("#go").onclick=()=>{S.extra=x;closeModal();process()};
 }
 
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function loadScript(u){return new Promise(r=>{const e=document.createElement("script");e.src=u;e.onload=()=>r(true);e.onerror=()=>r(false);document.head.appendChild(e)})}
+const CODECS={avc:["avc1.640033","avc1.64002A","avc1.4d002A","avc1.42001f"],hevc:["hvc1.1.6.L153.B0","hvc1.1.6.L123.B0","hvc1.1.6.L93.B0"]};
+async function pickCodec(kind,w,h,br,fps){
+  for(const c of CODECS[kind]){try{const r=await VideoEncoder.isConfigSupported({codec:c,width:w,height:h,bitrate:br,framerate:fps});if(r.supported)return c}catch(e){}}
+  return null;
+}
+function seekTo(v,t){return new Promise(res=>{const d=()=>{v.removeEventListener("seeked",d);clearTimeout(tm);res()};const tm=setTimeout(d,1500);v.addEventListener("seeked",d);v.currentTime=t})}
+async function probeFps(v){
+  const ts=[];
+  await new Promise(res=>{
+    const end=()=>{v.pause();res()};
+    const cb=(n,m)=>{ts.push(m.mediaTime); if(ts.length>=24||v.ended) end(); else v.requestVideoFrameCallback(cb)};
+    v.playbackRate=1; v.requestVideoFrameCallback(cb); v.play().catch(end); setTimeout(end,2500);
+  });
+  const d=[]; for(let i=1;i<ts.length;i++){const x=ts[i]-ts[i-1]; if(x>0) d.push(x)}
+  if(d.length<3) return 30;
+  d.sort((a,b)=>a-b); const f=1/d[d.length>>1];
+  return Math.max(15,Math.min(120,Math.round(f)));
+}
+async function encodeAudio(file){
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;
+    const ac=new AC({sampleRate:48000});
+    const buf=await ac.decodeAudioData(await file.arrayBuffer()); ac.close();
+    if(!window.AudioEncoder) return null;
+    const ch=Math.min(2,buf.numberOfChannels); let codec=null;
+    for(const c of ["mp4a.40.2","opus"]){try{const r=await AudioEncoder.isConfigSupported({codec:c,sampleRate:48000,numberOfChannels:ch,bitrate:192000});if(r.supported){codec=c;break}}catch(e){}}
+    if(!codec) return null;
+    const chunks=[]; let err=null;
+    const enc=new AudioEncoder({output:(c,m)=>chunks.push([c,m]),error:e=>err=e});
+    enc.configure({codec,sampleRate:48000,numberOfChannels:ch,bitrate:192000});
+    const chans=[...Array(ch).keys()].map(i=>buf.getChannelData(i));
+    for(let o=0;o<buf.length;o+=4800){
+      const n=Math.min(4800,buf.length-o), data=new Float32Array(n*ch);
+      chans.forEach((d,i)=>data.set(d.subarray(o,o+n),i*n));
+      const ad=new AudioData({format:"f32-planar",sampleRate:48000,numberOfFrames:n,numberOfChannels:ch,timestamp:Math.round(o/48000*1e6),data});
+      enc.encode(ad); ad.close();
+    }
+    await enc.flush(); enc.close();
+    if(err) return null;
+    return {chunks,codec,ch};
+  }catch(e){return null}
+}
+async function runPass(rate,c,setP){
+  const {v,cv,ctx,w,h,fps,br,codec,kind,aud,dur}=c;
+  await seekTo(v,0);
+  const target=new Mp4Muxer.ArrayBufferTarget();
+  const muxer=new Mp4Muxer.Muxer({target,video:{codec:kind,width:w,height:h},
+    ...(aud?{audio:{codec:aud.codec==="opus"?"opus":"aac",numberOfChannels:aud.ch,sampleRate:48000}}:{}),
+    fastStart:"in-memory",firstTimestampBehavior:"offset"});
+  let encErr=null;
+  const venc=new VideoEncoder({output:(ch,m)=>muxer.addVideoChunk(ch,m),error:e=>encErr=e});
+  venc.configure({codec,width:w,height:h,bitrate:br,framerate:fps,latencyMode:"quality"});
+  const times=[]; let n=0;
+  v.muted=true; v.playbackRate=rate;
+  await v.play();
+  await new Promise((resolve,reject)=>{
+    let done=false; const fin=()=>{if(!done){done=true;resolve()}};
+    const onFrame=async(now,meta)=>{
+      try{
+        const t=meta.mediaTime;
+        if(!times.length||t>times[times.length-1]+1e-6){
+          ctx.drawImage(v,0,0,w,h);
+          const fr=new VideoFrame(cv,{timestamp:Math.round(t*1e6)});
+          venc.encode(fr,{keyFrame:n%(fps*2)===0}); fr.close(); n++; times.push(t);
+          if(n%3===0) setP(Math.min(99,t/dur*100));
+        }
+        if(encErr) throw encErr;
+        if(venc.encodeQueueSize>6){ v.pause(); while(venc.encodeQueueSize>1) await sleep(4); if(!v.ended) await v.play(); }
+        if(!v.ended) v.requestVideoFrameCallback(onFrame); else fin();
+      }catch(e){done=true;reject(e)}
+    };
+    v.onended=()=>setTimeout(fin,250);
+    v.requestVideoFrameCallback(onFrame);
+  });
+  v.pause();
+  await venc.flush(); venc.close();
+  const d=[]; for(let i=1;i<times.length;i++) d.push(times[i]-times[i-1]);
+  const med=d.slice().sort((a,b)=>a-b)[d.length>>1]||1/fps;
+  const drops=d.filter(x=>x>med*1.7).length;
+  if(aud) aud.chunks.forEach(([ch,m])=>muxer.addAudioChunk(ch,m));
+  muxer.finalize();
+  return {buffer:target.buffer,drops,n};
+}
 async function process(){
-  closeModal(); S.step=3; view(); S.engine2="Cadangan (MediaRecorder)";
-  if(!window.Mp4Muxer) await loadScript("https://unpkg.com/mp4-muxer@5.1.3/build/mp4-muxer.min.js");
-  const why=!(window.VideoEncoder&&window.VideoFrame)?"browser tidak mendukung WebCodecs":!window.Mp4Muxer?"library muxer gagal dimuat":null;
-  if(why){S.engine2="Cadangan (MediaRecorder) - "+why; return processLegacy();}
+  closeModal(); S.step=3; view();
   const m=METHODS[S.method];
   const v=$("#vid"), cv=$("#cv"), ctx=cv.getContext("2d");
   const setP=p=>{const b=$("#pb");if(b){b.style.width=p+"%";$("#pt").textContent=Math.round(p)+"%"}};
+  const fail=msg=>{showErr(msg);const r=document.createElement("button");r.className="btn ghost";r.textContent="Kembali";r.onclick=()=>{S.step=2;view()};$("#app .panel").appendChild(r)};
   try{
+    if(!window.Mp4Muxer) await loadScript("https://unpkg.com/mp4-muxer@5.1.3/build/mp4-muxer.min.js");
+    if(!(window.VideoEncoder&&window.VideoFrame&&v.requestVideoFrameCallback)) return fail("Browser ini belum mendukung WebCodecs. Gunakan Chrome atau Edge terbaru.");
+    if(!window.Mp4Muxer) return fail("Library muxer gagal dimuat. Periksa koneksi internet lalu coba lagi.");
     v.src=URL.createObjectURL(S.file); v.muted=true;
     await new Promise((res,rej)=>{v.onloadeddata=res;v.onerror=()=>rej(new Error("Video tidak bisa dibaca browser."))});
     const dur=v.duration, vw=v.videoWidth, vh=v.videoHeight;
     const sc=m.h?Math.min(1,m.h/Math.min(vw,vh)):1;
     let w=Math.round(vw*sc), h=Math.round(vh*sc); w-=w%2; h-=h%2; cv.width=w; cv.height=h;
-    const fps=m.fps; let br=m.br;
-    if(S.extra==="Anti Lag") br=Math.min(br,7e6);
-    if(S.extra==="TikTok") br=Math.min(br,5e6);
-    let codec=null;
-    for(const c of ["avc1.640033","avc1.64002A","avc1.4d002A","avc1.42001f"]){
-      try{const r=await VideoEncoder.isConfigSupported({codec:c,width:w,height:h,bitrate:br,framerate:fps}); if(r.supported){codec=c;break}}catch(e){}
-    }
-    if(!codec){S.engine2="Cadangan (MediaRecorder) - codec H.264 tidak didukung"; return processLegacy();}
-    let abuf=null, aCodec=null;
-    try{
-      const AC=window.AudioContext||window.webkitAudioContext;
-      const ac=new AC({sampleRate:48000});
-      abuf=await ac.decodeAudioData(await S.file.arrayBuffer()); ac.close();
-      if(window.AudioEncoder){
-        for(const c of ["mp4a.40.2","opus"]){
-          try{const r=await AudioEncoder.isConfigSupported({codec:c,sampleRate:48000,numberOfChannels:Math.min(2,abuf.numberOfChannels),bitrate:192000}); if(r.supported){aCodec=c;break}}catch(e){}
-        }
-      }
-    }catch(e){abuf=null}
-    if(!aCodec) abuf=null;
-    const ch=abuf?Math.min(2,abuf.numberOfChannels):0;
-    const target=new Mp4Muxer.ArrayBufferTarget();
-    const muxer=new Mp4Muxer.Muxer({target,video:{codec:"avc",width:w,height:h,frameRate:fps},
-      ...(abuf?{audio:{codec:aCodec==="opus"?"opus":"aac",numberOfChannels:ch,sampleRate:48000}}:{}),fastStart:"in-memory"});
-    let encErr=null;
-    const venc=new VideoEncoder({output:(c,meta)=>muxer.addVideoChunk(c,meta),error:e=>encErr=e});
-    venc.configure({codec,width:w,height:h,bitrate:br,framerate:fps});
-    if(abuf){
-      const aenc=new AudioEncoder({output:(c,meta)=>muxer.addAudioChunk(c,meta),error:e=>encErr=e});
-      aenc.configure({codec:aCodec,sampleRate:48000,numberOfChannels:ch,bitrate:192000});
-      const chans=[...Array(ch).keys()].map(i=>abuf.getChannelData(i));
-      for(let o=0;o<abuf.length;o+=4800){
-        const n=Math.min(4800,abuf.length-o), data=new Float32Array(n*ch);
-        chans.forEach((d,i)=>data.set(d.subarray(o,o+n),i*n));
-        const ad=new AudioData({format:"f32-planar",sampleRate:48000,numberOfFrames:n,numberOfChannels:ch,timestamp:Math.round(o/48000*1e6),data});
-        aenc.encode(ad); ad.close();
-      }
-      await aenc.flush(); aenc.close();
-    }
-    const seek=t=>new Promise(res=>{
-      const done=()=>{v.removeEventListener("seeked",done);clearTimeout(tm);res()};
-      const tm=setTimeout(done,1500);
-      v.addEventListener("seeked",done);
-      v.currentTime=Math.min(t,Math.max(0,dur-0.001));
-    });
-    const N=Math.max(1,Math.round(dur*fps));
-    for(let i=0;i<N;i++){
-      await seek(i/fps+0.001);
-      ctx.drawImage(v,0,0,w,h);
-      const fr=new VideoFrame(cv,{timestamp:Math.round(i*1e6/fps),duration:Math.round(1e6/fps)});
-      venc.encode(fr,{keyFrame:i%(fps*2)===0}); fr.close();
-      while(venc.encodeQueueSize>6) await new Promise(r=>setTimeout(r,5));
-      if(encErr) throw encErr;
-      if(i%4===0) setP(i/N*100);
-    }
-    await venc.flush(); venc.close(); muxer.finalize();
-    const base=S.file.name.replace(/\.[^.]+$/,"");
-    S.out={blob:new Blob([target.buffer],{type:"video/mp4"}),ext:"mp4",name:`zenmethod_${base}_${S.method}.mp4`};
-    S.engine2="WebCodecs (v2)"; S.quota=Math.max(0,S.quota-(S.method==="max"?1:0));
-    S.step=4; view();
-  }catch(e){
-    S.step=3; view(); showErr(e.message||"Terjadi kesalahan saat merender.");
-    const r=document.createElement("button");r.className="btn ghost";r.textContent="Kembali";r.onclick=()=>{S.step=2;view()};$("#app .panel").appendChild(r);
-  }
-}
-
-async function processLegacy(){
-  const m = METHODS[S.method];
-  const v=$("#vid"), cv=$("#cv"), ctx=cv.getContext("2d");
-  const setP=p=>{const b=$("#pb");if(b){b.style.width=p+"%";$("#pt").textContent=Math.round(p)+"%"}};
-  try{
-    if(!window.MediaRecorder) throw new Error("Browser tidak mendukung MediaRecorder. Gunakan Chrome atau Edge terbaru.");
-    v.src=URL.createObjectURL(S.file); v.muted=false; v.volume=1;
-    await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(new Error("Video tidak bisa dibaca browser."))});
-    let h=m.h||v.videoHeight, w=Math.round(v.videoWidth*h/v.videoHeight);
-    if(h>v.videoHeight && !m.h) h=v.videoHeight;
-    w-=w%2; h-=h%2; cv.width=w; cv.height=h;
+    $("#pt").textContent="Menganalisis video...";
+    const fps=await probeFps(v);
     let br=m.br; if(S.extra==="Anti Lag") br=Math.min(br,7e6); if(S.extra==="TikTok") br=Math.min(br,5e6);
-    const stream=cv.captureStream(m.fps);
-    const AC=window.AudioContext||window.webkitAudioContext; let ac;
-    try{ac=new AC();const src=ac.createMediaElementSource(v);const dest=ac.createMediaStreamDestination();src.connect(dest);dest.stream.getAudioTracks().forEach(t=>stream.addTrack(t));}catch(e){}
-    const types=["video/mp4;codecs=avc1,mp4a.40.2","video/mp4","video/webm;codecs=vp9,opus","video/webm"];
-    const mime=types.find(t=>MediaRecorder.isTypeSupported(t))||"";
-    const rec=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:br,audioBitsPerSecond:192e3});
-    const chunks=[]; rec.ondataavailable=e=>e.data.size&&chunks.push(e.data);
-    const done=new Promise(r=>rec.onstop=r);
-    let run=true;
-    const draw=()=>{ if(!run) return; ctx.drawImage(v,0,0,w,h); setP(v.currentTime/v.duration*100); (v.requestVideoFrameCallback?v.requestVideoFrameCallback.bind(v):requestAnimationFrame)(draw); };
-    v.onended=()=>{run=false;setTimeout(()=>rec.stop(),300)};
-    rec.start(500); await v.play(); draw();
-    await done; if(ac) ac.close();
-    const ext=mime.includes("mp4")?"mp4":"webm";
-    const blob=new Blob(chunks,{type:mime.split(";")[0]||"video/webm"});
+    let kind=S.codec, codec=await pickCodec(kind,w,h,br,fps), note="";
+    if(!codec&&kind==="hevc"){kind="avc";codec=await pickCodec(kind,w,h,br,fps);note=" (HEVC tidak didukung, dipakai H.264)"}
+    if(!codec) return fail("Browser tidak bisa meng-encode H.264 pada resolusi ini.");
+    $("#pt").textContent="Menyiapkan audio...";
+    const aud=await encodeAudio(S.file);
+    const c={v,cv,ctx,w,h,fps,br,codec,kind,aud,dur};
+    let res=null;
+    for(const rate of [0.5,0.25,0.125]){
+      setP(0); res=await runPass(rate,c,setP);
+      if(res.drops<=Math.max(1,res.n*0.01)) break;
+    }
     const base=S.file.name.replace(/\.[^.]+$/,"");
-    S.out={blob,ext,name:`zenmethod_${base}_${S.method}.${ext}`};
+    S.out={blob:new Blob([res.buffer],{type:"video/mp4"}),ext:"mp4",name:`zenmethod_${base}_${S.method}.mp4`};
+    S.engine2=`WebCodecs \u00b7 ${kind==="hevc"?"HEVC (H.265)":"H.264"} \u00b7 ${fps} FPS \u00b7 ${dur.toFixed(1)} dtk${aud?"":" \u00b7 tanpa audio"}${note}`;
     S.quota=Math.max(0,S.quota-(S.method==="max"?1:0));
     S.step=4; view();
-  }catch(e){
-    S.step=3; view(); showErr(e.message||"Terjadi kesalahan saat merender.");
-    const r=document.createElement("button");r.className="btn ghost";r.textContent="Kembali";r.onclick=()=>{S.step=2;view()};$("#app .panel").appendChild(r);
-  }
+  }catch(e){ S.step=3; view(); fail(e.message||"Terjadi kesalahan saat merender."); }
 }
+
 view();
 </script>
 </body>
