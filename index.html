@@ -78,7 +78,7 @@ video,canvas{display:none}
 <body>
 <div class="wrap">
   <header>
-    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v4</small></span></div>
+    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v6</small></span></div>
     <span style="font-size:26px">&#9776;</span>
   </header>
   <div class="steps" id="steps"></div>
@@ -94,7 +94,7 @@ const METHODS = {
   fps:{name:"FPS Method",tag:"FPS",desc:"Untuk ponsel saat kamu hanya butuh patch FPS. Tidak termasuk metode kualitas.",h:0,fps:60,br:9e6},
   p720:{name:"720p60 Method",tag:"720p60",desc:"Render ulang ke 720p 60 FPS dengan bitrate stabil.",h:720,fps:60,br:7e6}
 };
-const S = {step:1, file:null, url:"", method:"max", engine:"Editing News", extra:null, codec:"avc", upscale:false, quota:6, progress:0, out:null, err:""};
+const S = {step:1, file:null, url:"", method:"max", engine:"Editing News", extra:null, codec:"avc", upscale:false, cfr:false, ref:true, quota:6, progress:0, out:null, err:""};
 const $ = s => document.querySelector(s);
 
 function renderSteps(){
@@ -147,8 +147,11 @@ function view(){
         <div class="row"><div class="radio"></div><div><h3>${m.name}</h3>${m.rec?'<span class="badge">VERSI BARU</span>':''}<p>${m.desc}</p></div></div>
         <div class="foot"><button class="tut" data-t="${k}">Lihat tutorial &#9654;</button>${m.rec?`<span class="left">${S.quota} DARI 6 TERSISA</span>`:''}</div>
       </div>`).join("")}
+      <div class="codec"><span>Profil referensi</span><div><button data-r="0" class="${!S.ref?"on":""}">Mati</button><button data-r="1" class="${S.ref?"on":""}">Hidup</button></div></div>
+      ${S.ref?'<p class="sub" style="font-size:12px;margin-top:8px">H.264 &middot; 1080p &middot; 60 FPS tetap &middot; ~36 Mbps &middot; keyframe tiap 10 frame &middot; tanpa B-frame. Codec, FPS, dan perbesar diatur otomatis.</p>':""}
       <div class="codec"><span>Codec video</span><div><button data-c="avc" class="${S.codec==="avc"?"on":""}">H.264</button><button data-c="hevc" class="${S.codec==="hevc"?"on":""}">HEVC (H.265)</button></div></div>
       <div class="codec"><span>Perbesar ke 1080p</span><div><button data-u="0" class="${!S.upscale?"on":""}">Mati</button><button data-u="1" class="${S.upscale?"on":""}">Hidup</button></div></div>
+      <div class="codec"><span>FPS tetap 60</span><div><button data-f="0" class="${!S.cfr?"on":""}">Mati</button><button data-f="1" class="${S.cfr?"on":""}">Hidup</button></div></div>
       <button class="btn" id="start">Mulai proses <span>&rarr;</span></button>
       <button class="btn ghost" id="back">Kembali</button>
     </section>`;
@@ -156,6 +159,8 @@ function view(){
     document.querySelectorAll(".tut").forEach(b=>b.onclick=e=>{e.stopPropagation();alert("Tutorial untuk "+METHODS[b.dataset.t].name+":\n1. Pilih video\n2. Pilih metode\n3. Tunggu render selesai\n4. Unduh hasilnya")});
     $("#back").onclick=()=>{S.step=1;view()};
     document.querySelectorAll(".codec button[data-c]").forEach(b=>b.onclick=()=>{S.codec=b.dataset.c;view()});
+    document.querySelectorAll(".codec button[data-r]").forEach(b=>b.onclick=()=>{S.ref=b.dataset.r==="1";view()});
+    document.querySelectorAll(".codec button[data-f]").forEach(b=>b.onclick=()=>{S.cfr=b.dataset.f==="1";view()});
     document.querySelectorAll(".codec button[data-u]").forEach(b=>b.onclick=()=>{S.upscale=b.dataset.u==="1";view()});
     $("#start").onclick=()=>{ if(S.method==="max") openEngine(); else {S.extra=null; process();} };
   }
@@ -215,7 +220,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function loadScript(u){return new Promise(r=>{const e=document.createElement("script");e.src=u;e.onload=()=>r(true);e.onerror=()=>r(false);document.head.appendChild(e)})}
 const CODECS={avc:["avc1.640033","avc1.64002A","avc1.4d002A","avc1.42001f"],hevc:["hvc1.1.6.L153.B0","hvc1.1.6.L123.B0","hvc1.1.6.L93.B0"]};
 async function pickCodec(kind,w,h,br,fps){
-  for(const c of CODECS[kind]){try{const r=await VideoEncoder.isConfigSupported({codec:c,width:w,height:h,bitrate:br,framerate:fps});if(r.supported)return c}catch(e){}}
+  for(const c of (S.ref&&kind==="avc"?["avc1.640029",...CODECS.avc]:CODECS[kind])){try{const r=await VideoEncoder.isConfigSupported({codec:c,width:w,height:h,bitrate:br,framerate:fps});if(r.supported)return c}catch(e){}}
   return null;
 }
 function seekTo(v,t){return new Promise(res=>{const d=()=>{v.removeEventListener("seeked",d);clearTimeout(tm);res()};const tm=setTimeout(d,1500);v.addEventListener("seeked",d);v.currentTime=t})}
@@ -256,16 +261,18 @@ async function encodeAudio(file){
   }catch(e){return null}
 }
 async function runPass(rate,c,setP){
-  const {v,cv,ctx,w,h,fps,br,codec,kind,aud,dur}=c;
+  const {v,cv,ctx,w,h,fps,br,codec,kind,aud,dur,cfr,rot,ref}=c;
+  const gop=ref?10:fps*2;
   await seekTo(v,0);
   const target=new Mp4Muxer.ArrayBufferTarget();
-  const muxer=new Mp4Muxer.Muxer({target,video:{codec:kind,width:w,height:h},
+  const muxer=new Mp4Muxer.Muxer({target,video:{codec:kind,width:cv.width,height:cv.height,...(rot?{rotation:90}:{})},
     ...(aud?{audio:{codec:aud.codec==="opus"?"opus":"aac",numberOfChannels:aud.ch,sampleRate:48000}}:{}),
     fastStart:"in-memory",firstTimestampBehavior:"offset"});
   let encErr=null;
   const venc=new VideoEncoder({output:(ch,m)=>muxer.addVideoChunk(ch,m),error:e=>encErr=e});
-  venc.configure({codec,width:w,height:h,bitrate:br,framerate:fps,latencyMode:"quality"});
-  const times=[]; let n=0;
+  venc.configure({codec,width:cv.width,height:cv.height,bitrate:br,framerate:fps,latencyMode:ref?"realtime":"quality",...(kind==="avc"?{avc:{format:"avc"}}:{})});
+  const times=[]; let n=0, held=null, k=0;
+  const emitTicks=until=>{while(k/fps<until-1e-9){const f=new VideoFrame(held,{timestamp:Math.round(k*1e6/fps)});venc.encode(f,{keyFrame:k%gop===0});f.close();k++}};
   v.muted=true; v.playbackRate=rate;
   await v.play();
   await new Promise((resolve,reject)=>{
@@ -274,10 +281,12 @@ async function runPass(rate,c,setP){
       try{
         const t=meta.mediaTime;
         if(!times.length||t>times[times.length-1]+1e-6){
-          ctx.drawImage(v,0,0,w,h);
+          if(rot){ctx.save();ctx.translate(0,cv.height);ctx.rotate(-Math.PI/2);ctx.drawImage(v,0,0,w,h);ctx.restore()}else ctx.drawImage(v,0,0,w,h);
           const fr=new VideoFrame(cv,{timestamp:Math.round(t*1e6)});
-          venc.encode(fr,{keyFrame:n%(fps*2)===0}); fr.close(); n++; times.push(t);
-          if(n%3===0) setP(Math.min(99,t/dur*100));
+          if(cfr){ if(held){emitTicks(t);held.close()} held=fr; }
+          else { venc.encode(fr,{keyFrame:n%gop===0}); fr.close(); n++; }
+          times.push(t);
+          if(times.length%3===0) setP(Math.min(99,t/dur*100));
         }
         if(encErr) throw encErr;
         if(venc.encodeQueueSize>6){ v.pause(); while(venc.encodeQueueSize>1) await sleep(4); if(!v.ended) await v.play(); }
@@ -288,13 +297,14 @@ async function runPass(rate,c,setP){
     v.requestVideoFrameCallback(onFrame);
   });
   v.pause();
+  if(cfr&&held){emitTicks(dur);held.close();held=null}
   await venc.flush(); venc.close();
   const d=[]; for(let i=1;i<times.length;i++) d.push(times[i]-times[i-1]);
   const med=d.slice().sort((a,b)=>a-b)[d.length>>1]||1/fps;
   const drops=d.filter(x=>x>med*1.7).length;
   if(aud) aud.chunks.forEach(([ch,m])=>muxer.addAudioChunk(ch,m));
   muxer.finalize();
-  return {buffer:target.buffer,drops,n};
+  return {buffer:target.buffer,drops,n:times.length};
 }
 async function process(){
   closeModal(); S.step=3; view();
@@ -311,17 +321,19 @@ async function process(){
     const dur=v.duration, vw=v.videoWidth, vh=v.videoHeight;
     let sc=m.h?Math.min(1,m.h/Math.min(vw,vh)):1;
     if(S.upscale&&Math.min(vw,vh)<1080) sc=1080/Math.min(vw,vh);
+    if(S.ref) sc=1080/Math.min(vw,vh);
+    let w=Math.round(vw*sc), h=Math.round(vh*sc); w-=w%2; h-=h%2;
+    const rot=S.ref&&h>w; cv.width=rot?h:w; cv.height=rot?w:h;
     ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
-    let w=Math.round(vw*sc), h=Math.round(vh*sc); w-=w%2; h-=h%2; cv.width=w; cv.height=h;
     $("#pt").textContent="Menganalisis video...";
     const fps=await probeFps(v);
-    let br=m.br; if(S.extra==="Anti Lag") br=Math.min(br,7e6); if(S.extra==="TikTok") br=Math.min(br,5e6);
-    let kind=S.codec, codec=await pickCodec(kind,w,h,br,fps), note="";
-    if(!codec&&kind==="hevc"){kind="avc";codec=await pickCodec(kind,w,h,br,fps);note=" (HEVC tidak didukung, dipakai H.264)"}
+    let br=S.ref?36e6:m.br; if(S.extra==="Anti Lag") br=Math.min(br,7e6); if(S.extra==="TikTok") br=Math.min(br,5e6);
+    let kind=S.ref?"avc":S.codec, codec=await pickCodec(kind,cv.width,cv.height,br,(S.cfr||S.ref)?60:fps), note="";
+    if(!codec&&kind==="hevc"){kind="avc";codec=await pickCodec(kind,cv.width,cv.height,br,(S.cfr||S.ref)?60:fps);note=" (HEVC tidak didukung, dipakai H.264)"}
     if(!codec) return fail("Browser tidak bisa meng-encode H.264 pada resolusi ini.");
     $("#pt").textContent="Menyiapkan audio...";
     const aud=await encodeAudio(S.file);
-    const c={v,cv,ctx,w,h,fps,br,codec,kind,aud,dur};
+    const c={v,cv,ctx,w,h,fps:(S.cfr||S.ref)?60:fps,br,codec,kind,aud,dur,cfr:S.cfr||S.ref,rot,ref:S.ref};
     let res=null;
     for(const rate of [0.5,0.25,0.125]){
       setP(0); res=await runPass(rate,c,setP);
@@ -329,7 +341,7 @@ async function process(){
     }
     const base=S.file.name.replace(/\.[^.]+$/,"");
     S.out={blob:new Blob([res.buffer],{type:"video/mp4"}),ext:"mp4",name:`zenmethod_${base}_${S.method}.mp4`};
-    S.engine2=`WebCodecs \u00b7 ${kind==="hevc"?"HEVC (H.265)":"H.264"} \u00b7 ${w}x${h} \u00b7 ${fps} FPS \u00b7 ${dur.toFixed(1)} dtk${aud?"":" \u00b7 tanpa audio"}${note}`;
+    S.engine2=`WebCodecs \u00b7 ${kind==="hevc"?"HEVC (H.265)":"H.264"} \u00b7 ${w}x${h} \u00b7 ${(S.cfr||S.ref)?"60 FPS tetap (sumber "+fps+")":fps+" FPS"}${S.ref?" \u00b7 profil referensi":""} \u00b7 ${dur.toFixed(1)} dtk${aud?"":" \u00b7 tanpa audio"}${note}`;
     S.quota=Math.max(0,S.quota-(S.method==="max"?1:0));
     S.step=4; view();
   }catch(e){ S.step=3; view(); fail(e.message||"Terjadi kesalahan saat merender."); }
