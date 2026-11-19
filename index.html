@@ -69,6 +69,7 @@ input[type=url]:focus{border-color:var(--gold)}
 .remind{border:1px solid var(--line);background:#17140c;border-radius:18px;padding:20px;margin-top:20px;text-align:left}
 .remind h3{margin:10px 0}.remind ul{padding-left:20px;color:#bbb;line-height:1.8}.remind b{color:var(--gold2)}
 .codec{display:flex;justify-content:space-between;align-items:center;margin-top:22px;gap:10px;color:var(--mut);font-size:14px}.codec div{display:flex;gap:8px}.codec button{background:#1b1b1e;border:1px solid #2c2c30;color:#ccc;border-radius:12px;padding:12px 14px;font-weight:700;cursor:pointer}.codec button.on{background:var(--gold);color:#111;border-color:var(--gold)}
+.codec button.on{background:var(--gold);color:#111}
 .err{color:#ff8a8a;margin-top:14px;font-size:14px;display:none}
 video,canvas{display:none}
 </style>
@@ -77,7 +78,7 @@ video,canvas{display:none}
 <body>
 <div class="wrap">
   <header>
-    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v3</small></span></div>
+    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v4</small></span></div>
     <span style="font-size:26px">&#9776;</span>
   </header>
   <div class="steps" id="steps"></div>
@@ -93,7 +94,7 @@ const METHODS = {
   fps:{name:"FPS Method",tag:"FPS",desc:"Untuk ponsel saat kamu hanya butuh patch FPS. Tidak termasuk metode kualitas.",h:0,fps:60,br:9e6},
   p720:{name:"720p60 Method",tag:"720p60",desc:"Render ulang ke 720p 60 FPS dengan bitrate stabil.",h:720,fps:60,br:7e6}
 };
-const S = {step:1, file:null, url:"", method:"max", engine:"Editing News", extra:null, codec:"avc", quota:6, progress:0, out:null, err:""};
+const S = {step:1, file:null, url:"", method:"max", engine:"Editing News", extra:null, codec:"avc", upscale:false, quota:6, progress:0, out:null, err:""};
 const $ = s => document.querySelector(s);
 
 function renderSteps(){
@@ -147,13 +148,15 @@ function view(){
         <div class="foot"><button class="tut" data-t="${k}">Lihat tutorial &#9654;</button>${m.rec?`<span class="left">${S.quota} DARI 6 TERSISA</span>`:''}</div>
       </div>`).join("")}
       <div class="codec"><span>Codec video</span><div><button data-c="avc" class="${S.codec==="avc"?"on":""}">H.264</button><button data-c="hevc" class="${S.codec==="hevc"?"on":""}">HEVC (H.265)</button></div></div>
+      <div class="codec"><span>Perbesar ke 1080p</span><div><button data-u="0" class="${!S.upscale?"on":""}">Mati</button><button data-u="1" class="${S.upscale?"on":""}">Hidup</button></div></div>
       <button class="btn" id="start">Mulai proses <span>&rarr;</span></button>
       <button class="btn ghost" id="back">Kembali</button>
     </section>`;
     document.querySelectorAll(".opt").forEach(o=>o.onclick=()=>{S.method=o.dataset.k;view()});
     document.querySelectorAll(".tut").forEach(b=>b.onclick=e=>{e.stopPropagation();alert("Tutorial untuk "+METHODS[b.dataset.t].name+":\n1. Pilih video\n2. Pilih metode\n3. Tunggu render selesai\n4. Unduh hasilnya")});
     $("#back").onclick=()=>{S.step=1;view()};
-    document.querySelectorAll(".codec button").forEach(b=>b.onclick=()=>{S.codec=b.dataset.c;view()});
+    document.querySelectorAll(".codec button[data-c]").forEach(b=>b.onclick=()=>{S.codec=b.dataset.c;view()});
+    document.querySelectorAll(".codec button[data-u]").forEach(b=>b.onclick=()=>{S.upscale=b.dataset.u==="1";view()});
     $("#start").onclick=()=>{ if(S.method==="max") openEngine(); else {S.extra=null; process();} };
   }
   if(S.step===3){
@@ -306,7 +309,9 @@ async function process(){
     v.src=URL.createObjectURL(S.file); v.muted=true;
     await new Promise((res,rej)=>{v.onloadeddata=res;v.onerror=()=>rej(new Error("Video tidak bisa dibaca browser."))});
     const dur=v.duration, vw=v.videoWidth, vh=v.videoHeight;
-    const sc=m.h?Math.min(1,m.h/Math.min(vw,vh)):1;
+    let sc=m.h?Math.min(1,m.h/Math.min(vw,vh)):1;
+    if(S.upscale&&Math.min(vw,vh)<1080) sc=1080/Math.min(vw,vh);
+    ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
     let w=Math.round(vw*sc), h=Math.round(vh*sc); w-=w%2; h-=h%2; cv.width=w; cv.height=h;
     $("#pt").textContent="Menganalisis video...";
     const fps=await probeFps(v);
@@ -324,7 +329,7 @@ async function process(){
     }
     const base=S.file.name.replace(/\.[^.]+$/,"");
     S.out={blob:new Blob([res.buffer],{type:"video/mp4"}),ext:"mp4",name:`zenmethod_${base}_${S.method}.mp4`};
-    S.engine2=`WebCodecs \u00b7 ${kind==="hevc"?"HEVC (H.265)":"H.264"} \u00b7 ${fps} FPS \u00b7 ${dur.toFixed(1)} dtk${aud?"":" \u00b7 tanpa audio"}${note}`;
+    S.engine2=`WebCodecs \u00b7 ${kind==="hevc"?"HEVC (H.265)":"H.264"} \u00b7 ${w}x${h} \u00b7 ${fps} FPS \u00b7 ${dur.toFixed(1)} dtk${aud?"":" \u00b7 tanpa audio"}${note}`;
     S.quota=Math.max(0,S.quota-(S.method==="max"?1:0));
     S.step=4; view();
   }catch(e){ S.step=3; view(); fail(e.message||"Terjadi kesalahan saat merender."); }
