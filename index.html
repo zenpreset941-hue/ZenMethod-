@@ -70,17 +70,20 @@ input[type=url]:focus{border-color:var(--gold)}
 .remind h3{margin:10px 0}.remind ul{padding-left:20px;color:#bbb;line-height:1.8}.remind b{color:var(--gold2)}
 .codec{display:flex;justify-content:space-between;align-items:center;margin-top:22px;gap:10px;color:var(--mut);font-size:14px}.codec div{display:flex;gap:8px}.codec button{background:#1b1b1e;border:1px solid #2c2c30;color:#ccc;border-radius:12px;padding:12px 14px;font-weight:700;cursor:pointer}.codec button.on{background:var(--gold);color:#111;border-color:var(--gold)}
 .codec button.on{background:var(--gold);color:#111}
+.tabs{display:flex;gap:8px;margin-bottom:18px;overflow-x:auto}.tabs button{flex:none;background:#151517;border:1px solid #2c2c30;color:#ccc;border-radius:14px;padding:12px 16px;font-weight:700;font-size:14px;cursor:pointer}.tabs button.on{background:var(--gold);color:#111;border-color:var(--gold)}
 .err{color:#ff8a8a;margin-top:14px;font-size:14px;display:none}
 video,canvas{display:none}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.js"></script>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v10</small></span></div>
+    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v11</small></span></div>
     <span style="font-size:26px">&#9776;</span>
   </header>
+  <div class="tabs" id="tabs"></div>
   <div class="steps" id="steps"></div>
   <main id="app"></main>
 </div>
@@ -94,7 +97,7 @@ const METHODS = {
   fps:{name:"FPS Method",tag:"FPS",desc:"Untuk ponsel saat kamu hanya butuh patch FPS. Tidak termasuk metode kualitas.",h:0,fps:60,br:9e6},
   p720:{name:"1080p60 Method",tag:"1080p60",desc:"Render ulang ke 1080p 60 FPS dengan bitrate lebih hemat.",h:1080,fps:60,br:7e6}
 };
-const S = {step:1, file:null, url:"", method:"max", engine:"Editing News", extra:null, codec:"avc", upscale:false, cfr:false, ref:true, quota:6, progress:0, out:null, err:""};
+const S = {tool:"video", step:1, file:null, url:"", method:"max", engine:"Editing News", extra:null, codec:"avc", upscale:false, cfr:false, ref:true, quota:6, progress:0, out:null, err:""};
 const $ = s => document.querySelector(s);
 
 function renderSteps(){
@@ -106,6 +109,8 @@ function renderSteps(){
 }
 
 function view(){
+  renderTabs();
+  if(S.tool!=="video"){ $("#steps").innerHTML=""; return viewTool(); }
   renderSteps();
   const a = $("#app");
   if(S.step===1){
@@ -375,6 +380,110 @@ async function process(){
     S.quota=Math.max(0,S.quota-(S.method==="max"?1:0));
     S.step=4; view();
   }catch(e){ S.step=3; view(); fail(e.message||"Terjadi kesalahan saat merender."); }
+}
+
+const T={img:null,colors:16,detail:"normal",svgText:"",svgName:"gambar.svg",xmlSrc:"",xmlSrcName:"",xmlOut:"",useFromSvg:false};
+function dl(blob,name){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
+function renderTabs(){
+  $("#tabs").innerHTML=[["video","Video"],["svg","Foto \u2192 SVG"],["xml","SVG \u2192 XML"]].map(([k,t])=>`<button data-k="${k}" class="${S.tool===k?"on":""}">${t}</button>`).join("");
+  document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{ if(S.tool==="video"&&S.step===3) return; S.tool=b.dataset.k; view(); });
+}
+function fallbackSVG(id,colors){
+  const {width:w,height:h,data}=id, L=Math.max(2,Math.round(Math.cbrt(colors)));
+  const q=v=>Math.round(Math.round(v/255*(L-1))*255/(L-1));
+  const key=(x,y)=>{const i=(y*w+x)*4;return q(data[i])+","+q(data[i+1])+","+q(data[i+2])};
+  let o=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" shape-rendering="crispEdges">`;
+  for(let y=0;y<h;y++){let x=0;while(x<w){const k=key(x,y);let e=x+1;while(e<w&&key(e,y)===k)e++;o+=`<rect x="${x}" y="${y}" width="${e-x}" height="1.05" fill="rgb(${k})"/>`;x=e}}
+  return o+"</svg>";
+}
+async function convertImage(){
+  if(!window.ImageTracer) await loadScript("https://unpkg.com/imagetracerjs@1.2.6/imagetracer_v1.2.6.js");
+  const tracer=!!window.ImageTracer;
+  const bmp=await createImageBitmap(T.img);
+  const max=tracer?900:160, sc=Math.min(1,max/Math.max(bmp.width,bmp.height));
+  const w=Math.max(1,Math.round(bmp.width*sc)), h=Math.max(1,Math.round(bmp.height*sc));
+  const c=document.createElement("canvas"); c.width=w; c.height=h;
+  const x=c.getContext("2d"); x.fillStyle="#fff"; x.fillRect(0,0,w,h); x.drawImage(bmp,0,0,w,h);
+  const id=x.getImageData(0,0,w,h); let svg;
+  if(tracer){
+    const d={low:{ltres:2,qtres:2,pathomit:16},normal:{ltres:1,qtres:1,pathomit:8},high:{ltres:0.5,qtres:0.5,pathomit:2}}[T.detail];
+    svg=ImageTracer.imagedataToSVG(id,{...d,numberofcolors:T.colors,colorsampling:2,colorquantcycles:3,blurradius:0,viewbox:true,strokewidth:0,roundcoords:1});
+  } else svg=fallbackSVG(id,T.colors);
+  return {svg,tracer,w,h};
+}
+function viewTool(){
+  const a=$("#app");
+  if(S.tool==="svg"){
+    a.innerHTML=`<section class="panel">
+      <div class="hd"><div class="num">F</div><div><h1>Foto &rarr; SVG</h1><p class="sub">Ubah JPG, PNG, atau WebP menjadi gambar vektor.</p></div></div>
+      <div class="drop" id="idrop"><div class="plus">+</div><b>Pilih foto</b><span>atau seret &amp; lepas file di sini</span></div>
+      <input type="file" id="ifile" accept="image/*" hidden>
+      <div class="fileinfo" id="ifi"></div>
+      <div class="codec"><span>Jumlah warna: <b id="cn">${T.colors}</b></span><input type="range" id="cols" min="2" max="32" value="${T.colors}" style="flex:1;accent-color:#f6c744"></div>
+      <div class="codec"><span>Detail</span><div id="dt">${[["low","Rendah"],["normal","Sedang"],["high","Tinggi"]].map(([k,t])=>`<button data-d="${k}" class="${T.detail===k?"on":""}">${t}</button>`).join("")}</div></div>
+      <div class="err" id="terr"></div>
+      <button class="btn" id="conv"${T.img?"":" disabled"}>Ubah ke SVG <span>&rarr;</span></button>
+      <div id="res"></div></section>`;
+    const drop=$("#idrop"), f=$("#ifile");
+    const setImg=file=>{ if(!file) return; if(!file.type.startsWith("image/")){const e=$("#terr");e.textContent="File harus berupa gambar.";e.style.display="block";return} T.img=file; const fi=$("#ifi"); fi.style.display="block"; fi.textContent=file.name+" \u2014 "+(file.size/1048576).toFixed(1)+" MB"; $("#conv").disabled=false; $("#terr").style.display="none"; };
+    drop.onclick=()=>f.click(); f.onchange=()=>setImg(f.files[0]);
+    ["dragover","dragenter"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add("over")}));
+    ["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove("over")}));
+    drop.addEventListener("drop",ev=>setImg(ev.dataTransfer.files[0]));
+    if(T.img){const fi=$("#ifi");fi.style.display="block";fi.textContent=T.img.name}
+    $("#cols").oninput=e=>{T.colors=+e.target.value;$("#cn").textContent=T.colors};
+    document.querySelectorAll("#dt button").forEach(b=>b.onclick=()=>{T.detail=b.dataset.d;document.querySelectorAll("#dt button").forEach(x=>x.classList.toggle("on",x===b))});
+    $("#conv").onclick=async()=>{
+      const btn=$("#conv"), e=$("#terr"); e.style.display="none"; btn.disabled=true; btn.firstChild.textContent="Memproses... ";
+      try{
+        const r=await convertImage(); T.svgText=r.svg; T.svgName=T.img.name.replace(/\.[^.]+$/,"")+".svg";
+        const url=URL.createObjectURL(new Blob([r.svg],{type:"image/svg+xml"}));
+        $("#res").innerHTML=`<div class="file" style="flex-direction:column;align-items:stretch"><img src="${url}" style="max-width:100%;background:#fff;border-radius:12px"><small style="margin-top:10px">${(r.svg.length/1024).toFixed(0)} KB &middot; ${r.w}x${r.h}${r.tracer?"":" &middot; mode sederhana (library tracing gagal dimuat)"}</small></div>
+          <button class="btn" id="dsvg">Unduh SVG <span>&darr;</span></button>
+          <button class="btn ghost" id="tox">Lanjut ke SVG &rarr; XML</button>`;
+        $("#dsvg").onclick=()=>dl(new Blob([T.svgText],{type:"image/svg+xml"}),T.svgName);
+        $("#tox").onclick=()=>{T.useFromSvg=true;S.tool="xml";view()};
+      }catch(err){e.textContent="Gagal mengubah gambar: "+(err.message||err);e.style.display="block"}
+      btn.disabled=false; btn.firstChild.textContent="Ubah ke SVG ";
+    };
+  }
+  if(S.tool==="xml"){
+    const hasPrev=T.useFromSvg&&T.svgText;
+    a.innerHTML=`<section class="panel">
+      <div class="hd"><div class="num">X</div><div><h1>SVG &rarr; XML</h1><p class="sub">Ubah file SVG menjadi file .xml.</p></div></div>
+      ${hasPrev?`<div class="fileinfo" style="display:block">Memakai SVG dari langkah sebelumnya: ${esc(T.svgName)}</div><button class="btn ghost" id="other" style="margin-top:12px">Pilih file SVG lain</button>`:`<div class="drop" id="xdrop"><div class="plus">+</div><b>Pilih file SVG</b><span>atau seret &amp; lepas file di sini</span></div><input type="file" id="xfile" accept=".svg,image/svg+xml" hidden><div class="fileinfo" id="xfi"></div>`}
+      <div class="remind" style="margin-top:18px"><div class="tag">CATATAN ALIGHT MOTION</div><p class="sub" style="margin-top:8px;font-size:13px">Alight Motion bisa mengimpor file <b style="color:#fde68a">.svg</b> langsung lewat menu tambah aset. File .xml di sini berisi SVG yang sama dalam format XML. Format preset .xml milik Alight Motion bersifat tertutup dan belum bisa saya pastikan, jadi uji juga file .svg-nya.</p></div>
+      <div class="err" id="xerr"></div>
+      <button class="btn" id="xconv"${hasPrev?"":" disabled"}>Ubah ke XML <span>&rarr;</span></button>
+      <div id="xres"></div></section>`;
+    if(hasPrev){ $("#other").onclick=()=>{T.useFromSvg=false;T.xmlSrc="";view()}; }
+    else{
+      const drop=$("#xdrop"), f=$("#xfile");
+      const setF=async file=>{ if(!file) return; if(!/\.svg$/i.test(file.name)&&file.type!=="image/svg+xml"){const e=$("#xerr");e.textContent="File harus berformat SVG.";e.style.display="block";return} T.xmlSrc=await file.text(); T.xmlSrcName=file.name; const fi=$("#xfi");fi.style.display="block";fi.textContent=file.name; $("#xconv").disabled=false; $("#xerr").style.display="none"; };
+      drop.onclick=()=>f.click(); f.onchange=()=>setF(f.files[0]);
+      ["dragover","dragenter"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add("over")}));
+      ["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove("over")}));
+      drop.addEventListener("drop",ev=>setF(ev.dataTransfer.files[0]));
+    }
+    $("#xconv").onclick=()=>{
+      const e=$("#xerr"); e.style.display="none";
+      try{
+        const src=hasPrev?T.svgText:T.xmlSrc, name=(hasPrev?T.svgName:T.xmlSrcName).replace(/\.[^.]+$/,"");
+        const doc=new DOMParser().parseFromString(src,"image/svg+xml");
+        if(doc.querySelector("parsererror")||doc.documentElement.localName!=="svg") throw new Error("File SVG tidak valid.");
+        doc.querySelectorAll("script,foreignObject").forEach(n=>n.remove());
+        doc.querySelectorAll("*").forEach(n=>[...n.attributes].forEach(at=>{ if(/^on/i.test(at.name)||(/href$/i.test(at.name)&&/^\s*(javascript:|https?:)/i.test(at.value))) n.removeAttribute(at.name) }));
+        const svg=doc.documentElement; svg.setAttribute("xmlns","http://www.w3.org/2000/svg");
+        if(!svg.getAttribute("viewBox")){const w=parseFloat(svg.getAttribute("width")),h=parseFloat(svg.getAttribute("height")); if(w&&h) svg.setAttribute("viewBox",`0 0 ${w} ${h}`)}
+        const xml='<?xml version="1.0" encoding="UTF-8"?>\n'+new XMLSerializer().serializeToString(svg);
+        $("#xres").innerHTML=`<div class="file"><div style="text-align:left"><b>${esc(name)}.xml</b><small>${(xml.length/1024).toFixed(0)} KB &middot; XML</small></div><em>Siap</em></div>
+          <button class="btn" id="dxml">Unduh XML <span>&darr;</span></button>
+          <button class="btn ghost" id="dsvg2">Unduh SVG juga</button>`;
+        $("#dxml").onclick=()=>dl(new Blob([xml],{type:"application/xml"}),name+".xml");
+        $("#dsvg2").onclick=()=>dl(new Blob([xml],{type:"image/svg+xml"}),name+".svg");
+      }catch(err){e.textContent=err.message||String(err);e.style.display="block"}
+    };
+  }
 }
 
 view();
