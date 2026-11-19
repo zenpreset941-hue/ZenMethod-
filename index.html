@@ -80,7 +80,7 @@ video,canvas{display:none}
 <body>
 <div class="wrap">
   <header>
-    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v11</small></span></div>
+    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v12</small></span></div>
     <span style="font-size:26px">&#9776;</span>
   </header>
   <div class="tabs" id="tabs"></div>
@@ -382,7 +382,7 @@ async function process(){
   }catch(e){ S.step=3; view(); fail(e.message||"Terjadi kesalahan saat merender."); }
 }
 
-const T={img:null,colors:16,detail:"normal",svgText:"",svgName:"gambar.svg",xmlSrc:"",xmlSrcName:"",xmlOut:"",useFromSvg:false};
+const T={img:null,colors:32,detail:"normal",svgText:"",svgName:"gambar.svg",xmlSrc:"",xmlSrcName:"",xmlOut:"",useFromSvg:false};
 function dl(blob,name){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
 function renderTabs(){
   $("#tabs").innerHTML=[["video","Video"],["svg","Foto \u2192 SVG"],["xml","SVG \u2192 XML"]].map(([k,t])=>`<button data-k="${k}" class="${S.tool===k?"on":""}">${t}</button>`).join("");
@@ -400,14 +400,14 @@ async function convertImage(){
   if(!window.ImageTracer) await loadScript("https://unpkg.com/imagetracerjs@1.2.6/imagetracer_v1.2.6.js");
   const tracer=!!window.ImageTracer;
   const bmp=await createImageBitmap(T.img);
-  const max=tracer?900:160, sc=Math.min(1,max/Math.max(bmp.width,bmp.height));
+  const target=tracer?900:160, sc=Math.min(8,target/Math.max(bmp.width,bmp.height));
   const w=Math.max(1,Math.round(bmp.width*sc)), h=Math.max(1,Math.round(bmp.height*sc));
   const c=document.createElement("canvas"); c.width=w; c.height=h;
-  const x=c.getContext("2d"); x.fillStyle="#fff"; x.fillRect(0,0,w,h); x.drawImage(bmp,0,0,w,h);
+  const x=c.getContext("2d"); x.imageSmoothingEnabled=true; x.imageSmoothingQuality="high"; x.fillStyle="#fff"; x.fillRect(0,0,w,h); x.drawImage(bmp,0,0,w,h);
   const id=x.getImageData(0,0,w,h); let svg;
   if(tracer){
-    const d={low:{ltres:2,qtres:2,pathomit:16},normal:{ltres:1,qtres:1,pathomit:8},high:{ltres:0.5,qtres:0.5,pathomit:2}}[T.detail];
-    svg=ImageTracer.imagedataToSVG(id,{...d,numberofcolors:T.colors,colorsampling:2,colorquantcycles:3,blurradius:0,viewbox:true,strokewidth:0,roundcoords:1});
+    const d={low:{ltres:1,qtres:1,pathomit:16},normal:{ltres:0.5,qtres:0.5,pathomit:8},high:{ltres:0.3,qtres:0.3,pathomit:4}}[T.detail];
+    svg=ImageTracer.imagedataToSVG(id,{...d,numberofcolors:T.colors,colorsampling:2,colorquantcycles:5,blurradius:1,blurdelta:24,viewbox:true,strokewidth:0,roundcoords:2});
   } else svg=fallbackSVG(id,T.colors);
   return {svg,tracer,w,h};
 }
@@ -419,7 +419,7 @@ function viewTool(){
       <div class="drop" id="idrop"><div class="plus">+</div><b>Pilih foto</b><span>atau seret &amp; lepas file di sini</span></div>
       <input type="file" id="ifile" accept="image/*" hidden>
       <div class="fileinfo" id="ifi"></div>
-      <div class="codec"><span>Jumlah warna: <b id="cn">${T.colors}</b></span><input type="range" id="cols" min="2" max="32" value="${T.colors}" style="flex:1;accent-color:#f6c744"></div>
+      <div class="codec"><span>Jumlah warna: <b id="cn">${T.colors}</b></span><input type="range" id="cols" min="2" max="64" value="${T.colors}" style="flex:1;accent-color:#f6c744"></div>
       <div class="codec"><span>Detail</span><div id="dt">${[["low","Rendah"],["normal","Sedang"],["high","Tinggi"]].map(([k,t])=>`<button data-d="${k}" class="${T.detail===k?"on":""}">${t}</button>`).join("")}</div></div>
       <div class="err" id="terr"></div>
       <button class="btn" id="conv"${T.img?"":" disabled"}>Ubah ke SVG <span>&rarr;</span></button>
