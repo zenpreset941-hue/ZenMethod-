@@ -78,7 +78,7 @@ video,canvas{display:none}
 <body>
 <div class="wrap">
   <header>
-    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v6</small></span></div>
+    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v8</small></span></div>
     <span style="font-size:26px">&#9776;</span>
   </header>
   <div class="steps" id="steps"></div>
@@ -219,8 +219,16 @@ function openPrepare(){
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function loadScript(u){return new Promise(r=>{const e=document.createElement("script");e.src=u;e.onload=()=>r(true);e.onerror=()=>r(false);document.head.appendChild(e)})}
 const CODECS={avc:["avc1.640033","avc1.64002A","avc1.4d002A","avc1.42001f"],hevc:["hvc1.1.6.L153.B0","hvc1.1.6.L123.B0","hvc1.1.6.L93.B0"]};
-async function pickCodec(kind,w,h,br,fps){
-  for(const c of (S.ref&&kind==="avc"?["avc1.640029",...CODECS.avc]:CODECS[kind])){try{const r=await VideoEncoder.isConfigSupported({codec:c,width:w,height:h,bitrate:br,framerate:fps});if(r.supported)return c}catch(e){}}
+async function negotiate(kind,W,H,br,fps,hw){
+  const list=kind==="avc"?["avc1.640029","avc1.64002A","avc1.640033","avc1.4d002A","avc1.4d0029","avc1.42E02A","avc1.42E029","avc1.42001f"]:CODECS.hevc;
+  const brs=[...new Set([br,br*0.7,br*0.5,Math.min(br,12e6),Math.min(br,8e6)].map(Math.round))].filter(x=>x<=br);
+  for(const f of [...new Set([fps,30])]) for(const lat of ["realtime","quality"]) for(const b of brs) for(const c of list){
+    try{
+      const cfg={codec:c,width:W,height:H,bitrate:b,framerate:f,latencyMode:lat,hardwareAcceleration:hw||"no-preference",...(kind==="avc"?{avc:{format:"avc"}}:{})};
+      const r=await VideoEncoder.isConfigSupported(cfg);
+      if(r.supported) return {codec:c,br:b,lat};
+    }catch(e){}
+  }
   return null;
 }
 function seekTo(v,t){return new Promise(res=>{const d=()=>{v.removeEventListener("seeked",d);clearTimeout(tm);res()};const tm=setTimeout(d,1500);v.addEventListener("seeked",d);v.currentTime=t})}
@@ -261,7 +269,10 @@ async function encodeAudio(file){
   }catch(e){return null}
 }
 async function runPass(rate,c,setP){
-  const {v,cv,ctx,w,h,fps,br,codec,kind,aud,dur,cfr,rot,ref}=c;
+  try{return await runPass0(rate,c,setP)}catch(e){try{c.v.pause()}catch(_){} try{c._enc&&c._enc.close()}catch(_){} throw e}
+}
+async function runPass0(rate,c,setP){
+  const {v,cv,ctx,w,h,fps,br,lat,hw,codec,kind,aud,dur,cfr,rot,ref}=c;
   const gop=ref?10:fps*2;
   await seekTo(v,0);
   const target=new Mp4Muxer.ArrayBufferTarget();
@@ -270,7 +281,8 @@ async function runPass(rate,c,setP){
     fastStart:"in-memory",firstTimestampBehavior:"offset"});
   let encErr=null;
   const venc=new VideoEncoder({output:(ch,m)=>muxer.addVideoChunk(ch,m),error:e=>encErr=e});
-  venc.configure({codec,width:cv.width,height:cv.height,bitrate:br,framerate:fps,latencyMode:ref?"realtime":"quality",...(kind==="avc"?{avc:{format:"avc"}}:{})});
+  c._enc=venc;
+  venc.configure({hardwareAcceleration:hw||"no-preference",codec,width:cv.width,height:cv.height,bitrate:br,framerate:fps,latencyMode:lat,...(kind==="avc"?{avc:{format:"avc"}}:{})});
   const times=[]; let n=0, held=null, k=0;
   const emitTicks=until=>{while(k/fps<until-1e-9){const f=new VideoFrame(held,{timestamp:Math.round(k*1e6/fps)});venc.encode(f,{keyFrame:k%gop===0});f.close();k++}};
   v.muted=true; v.playbackRate=rate;
@@ -322,26 +334,41 @@ async function process(){
     let sc=m.h?Math.min(1,m.h/Math.min(vw,vh)):1;
     if(S.upscale&&Math.min(vw,vh)<1080) sc=1080/Math.min(vw,vh);
     if(S.ref) sc=1080/Math.min(vw,vh);
-    let w=Math.round(vw*sc), h=Math.round(vh*sc); w-=w%2; h-=h%2;
-    const rot=S.ref&&h>w; cv.width=rot?h:w; cv.height=rot?w:h;
-    ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
     $("#pt").textContent="Menganalisis video...";
     const fps=await probeFps(v);
     let br=S.ref?36e6:m.br; if(S.extra==="Anti Lag") br=Math.min(br,7e6); if(S.extra==="TikTok") br=Math.min(br,5e6);
-    let kind=S.ref?"avc":S.codec, codec=await pickCodec(kind,cv.width,cv.height,br,(S.cfr||S.ref)?60:fps), note="";
-    if(!codec&&kind==="hevc"){kind="avc";codec=await pickCodec(kind,cv.width,cv.height,br,(S.cfr||S.ref)?60:fps);note=" (HEVC tidak didukung, dipakai H.264)"}
-    if(!codec) return fail("Browser tidak bisa meng-encode H.264 pada resolusi ini.");
+    const outFps=(S.cfr||S.ref)?60:fps;
+    const kind0=S.ref?"avc":S.codec;
     $("#pt").textContent="Menyiapkan audio...";
     const aud=await encodeAudio(S.file);
-    const c={v,cv,ctx,w,h,fps:(S.cfr||S.ref)?60:fps,br,codec,kind,aud,dur,cfr:S.cfr||S.ref,rot,ref:S.ref};
-    let res=null;
-    for(const rate of [0.5,0.25,0.125]){
-      setP(0); res=await runPass(rate,c,setP);
-      if(res.drops<=Math.max(1,res.n*0.01)) break;
+    const dimsFor=mult=>{let w=Math.round(vw*sc*mult),h=Math.round(vh*sc*mult);w-=w%2;h-=h%2;return {w,h,rot:S.ref&&h>w}};
+    $("#pt").textContent="Mencari pengaturan encoder...";
+    const cands=[];
+    for(const mult of [1,0.75,0.667]){
+      const d=dimsFor(mult), W=d.rot?d.h:d.w, H=d.rot?d.w:d.h;
+      for(const kind of kind0==="hevc"?["hevc","avc"]:["avc"]) for(const hw of ["no-preference","prefer-software"]){
+        const n=await negotiate(kind,W,H,br,outFps,hw);
+        if(n) cands.push({mult,kind,hw,...n,forced:false});
+      }
     }
+    for(const mult of [1,0.75]) for(const hw of ["prefer-software","no-preference"]) cands.push({mult,kind:"avc",hw,codec:S.ref?"avc1.640029":"avc1.4d002A",br,lat:"realtime",forced:true});
+    let res=null, used=null, lastErr=null;
+    for(const cd of cands){
+      const d=dimsFor(cd.mult); cv.width=d.rot?d.h:d.w; cv.height=d.rot?d.w:d.h;
+      ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
+      const c={v,cv,ctx,w:d.w,h:d.h,fps:outFps,br:cd.br,lat:cd.lat,hw:cd.hw,codec:cd.codec,kind:cd.kind,aud,dur,cfr:S.cfr||S.ref,rot:d.rot,ref:S.ref};
+      try{
+        for(const rate of [0.5,0.25,0.125]){
+          setP(0); res=await runPass(rate,c,setP);
+          if(res.drops<=Math.max(1,res.n*0.01)) break;
+        }
+        used={cd,d}; break;
+      }catch(e){ lastErr=e; res=null; }
+    }
+    if(!res) return fail("Encoder HP menolak semua pengaturan, termasuk yang dipaksa. "+(lastErr&&lastErr.message?lastErr.message:""));
     const base=S.file.name.replace(/\.[^.]+$/,"");
     S.out={blob:new Blob([res.buffer],{type:"video/mp4"}),ext:"mp4",name:`zenmethod_${base}_${S.method}.mp4`};
-    S.engine2=`WebCodecs \u00b7 ${kind==="hevc"?"HEVC (H.265)":"H.264"} \u00b7 ${w}x${h} \u00b7 ${(S.cfr||S.ref)?"60 FPS tetap (sumber "+fps+")":fps+" FPS"}${S.ref?" \u00b7 profil referensi":""} \u00b7 ${dur.toFixed(1)} dtk${aud?"":" \u00b7 tanpa audio"}${note}`;
+    S.engine2=`WebCodecs \u00b7 ${used.cd.kind==="hevc"?"HEVC (H.265)":"H.264"} \u00b7 ${used.d.w}x${used.d.h} \u00b7 ${Math.round(used.cd.br/1e6)} Mbps \u00b7 ${(S.cfr||S.ref)?"60 FPS tetap (sumber "+fps+")":fps+" FPS"}${S.ref?" \u00b7 profil referensi":""} \u00b7 ${dur.toFixed(1)} dtk${aud?"":" \u00b7 tanpa audio"}${used.cd.forced?" \u00b7 dipaksa":""}${used.cd.mult<1?" \u00b7 resolusi diturunkan":""}${kind0==="hevc"&&used.cd.kind==="avc"?" \u00b7 HEVC tidak didukung":""}`;
     S.quota=Math.max(0,S.quota-(S.method==="max"?1:0));
     S.step=4; view();
   }catch(e){ S.step=3; view(); fail(e.message||"Terjadi kesalahan saat merender."); }
