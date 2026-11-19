@@ -78,7 +78,7 @@ video,canvas{display:none}
 <body>
 <div class="wrap">
   <header>
-    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v8</small></span></div>
+    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v9</small></span></div>
     <span style="font-size:26px">&#9776;</span>
   </header>
   <div class="steps" id="steps"></div>
@@ -92,7 +92,7 @@ video,canvas{display:none}
 const METHODS = {
   max:{name:"MAX QUALITY + FPS METHOD",tag:"QUALITY + FPS",desc:"Ekspor MP4 lokal berkualitas tinggi hingga 1080p, mempertahankan timing frame sumber.",h:1080,fps:60,br:14e6,rec:true},
   fps:{name:"FPS Method",tag:"FPS",desc:"Untuk ponsel saat kamu hanya butuh patch FPS. Tidak termasuk metode kualitas.",h:0,fps:60,br:9e6},
-  p720:{name:"720p60 Method",tag:"720p60",desc:"Render ulang ke 720p 60 FPS dengan bitrate stabil.",h:720,fps:60,br:7e6}
+  p720:{name:"1080p60 Method",tag:"1080p60",desc:"Render ulang ke 1080p 60 FPS dengan bitrate lebih hemat.",h:1080,fps:60,br:7e6}
 };
 const S = {step:1, file:null, url:"", method:"max", engine:"Editing News", extra:null, codec:"avc", upscale:false, cfr:false, ref:true, quota:6, progress:0, out:null, err:""};
 const $ = s => document.querySelector(s);
@@ -148,20 +148,14 @@ function view(){
         <div class="foot"><button class="tut" data-t="${k}">Lihat tutorial &#9654;</button>${m.rec?`<span class="left">${S.quota} DARI 6 TERSISA</span>`:''}</div>
       </div>`).join("")}
       <div class="codec"><span>Profil referensi</span><div><button data-r="0" class="${!S.ref?"on":""}">Mati</button><button data-r="1" class="${S.ref?"on":""}">Hidup</button></div></div>
-      ${S.ref?'<p class="sub" style="font-size:12px;margin-top:8px">H.264 &middot; 1080p &middot; 60 FPS tetap &middot; ~36 Mbps &middot; keyframe tiap 10 frame &middot; tanpa B-frame. Codec, FPS, dan perbesar diatur otomatis.</p>':""}
-      <div class="codec"><span>Codec video</span><div><button data-c="avc" class="${S.codec==="avc"?"on":""}">H.264</button><button data-c="hevc" class="${S.codec==="hevc"?"on":""}">HEVC (H.265)</button></div></div>
-      <div class="codec"><span>Perbesar ke 1080p</span><div><button data-u="0" class="${!S.upscale?"on":""}">Mati</button><button data-u="1" class="${S.upscale?"on":""}">Hidup</button></div></div>
-      <div class="codec"><span>FPS tetap 60</span><div><button data-f="0" class="${!S.cfr?"on":""}">Mati</button><button data-f="1" class="${S.cfr?"on":""}">Hidup</button></div></div>
+      <p class="sub" style="font-size:12px;margin-top:8px">Output selalu H.264 &middot; 1080p &middot; 60 FPS tetap.${S.ref?' Profil referensi: ~36 Mbps, keyframe tiap 10 frame, tanpa B-frame.':''}</p>
       <button class="btn" id="start">Mulai proses <span>&rarr;</span></button>
       <button class="btn ghost" id="back">Kembali</button>
     </section>`;
     document.querySelectorAll(".opt").forEach(o=>o.onclick=()=>{S.method=o.dataset.k;view()});
     document.querySelectorAll(".tut").forEach(b=>b.onclick=e=>{e.stopPropagation();alert("Tutorial untuk "+METHODS[b.dataset.t].name+":\n1. Pilih video\n2. Pilih metode\n3. Tunggu render selesai\n4. Unduh hasilnya")});
     $("#back").onclick=()=>{S.step=1;view()};
-    document.querySelectorAll(".codec button[data-c]").forEach(b=>b.onclick=()=>{S.codec=b.dataset.c;view()});
     document.querySelectorAll(".codec button[data-r]").forEach(b=>b.onclick=()=>{S.ref=b.dataset.r==="1";view()});
-    document.querySelectorAll(".codec button[data-f]").forEach(b=>b.onclick=()=>{S.cfr=b.dataset.f==="1";view()});
-    document.querySelectorAll(".codec button[data-u]").forEach(b=>b.onclick=()=>{S.upscale=b.dataset.u==="1";view()});
     $("#start").onclick=()=>{ if(S.method==="max") openEngine(); else {S.extra=null; process();} };
   }
   if(S.step===3){
@@ -331,14 +325,12 @@ async function process(){
     v.src=URL.createObjectURL(S.file); v.muted=true;
     await new Promise((res,rej)=>{v.onloadeddata=res;v.onerror=()=>rej(new Error("Video tidak bisa dibaca browser."))});
     const dur=v.duration, vw=v.videoWidth, vh=v.videoHeight;
-    let sc=m.h?Math.min(1,m.h/Math.min(vw,vh)):1;
-    if(S.upscale&&Math.min(vw,vh)<1080) sc=1080/Math.min(vw,vh);
-    if(S.ref) sc=1080/Math.min(vw,vh);
+    const sc=1080/Math.min(vw,vh);
     $("#pt").textContent="Menganalisis video...";
     const fps=await probeFps(v);
     let br=S.ref?36e6:m.br; if(S.extra==="Anti Lag") br=Math.min(br,7e6); if(S.extra==="TikTok") br=Math.min(br,5e6);
-    const outFps=(S.cfr||S.ref)?60:fps;
-    const kind0=S.ref?"avc":S.codec;
+    const outFps=60;
+    const kind0="avc";
     $("#pt").textContent="Menyiapkan audio...";
     const aud=await encodeAudio(S.file);
     const dimsFor=mult=>{let w=Math.round(vw*sc*mult),h=Math.round(vh*sc*mult);w-=w%2;h-=h%2;return {w,h,rot:S.ref&&h>w}};
@@ -356,7 +348,7 @@ async function process(){
     for(const cd of cands){
       const d=dimsFor(cd.mult); cv.width=d.rot?d.h:d.w; cv.height=d.rot?d.w:d.h;
       ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality="high";
-      const c={v,cv,ctx,w:d.w,h:d.h,fps:outFps,br:cd.br,lat:cd.lat,hw:cd.hw,codec:cd.codec,kind:cd.kind,aud,dur,cfr:S.cfr||S.ref,rot:d.rot,ref:S.ref};
+      const c={v,cv,ctx,w:d.w,h:d.h,fps:outFps,br:cd.br,lat:cd.lat,hw:cd.hw,codec:cd.codec,kind:cd.kind,aud,dur,cfr:true,rot:d.rot,ref:S.ref};
       try{
         for(const rate of [0.5,0.25,0.125]){
           setP(0); res=await runPass(rate,c,setP);
@@ -368,7 +360,7 @@ async function process(){
     if(!res) return fail("Encoder HP menolak semua pengaturan, termasuk yang dipaksa. "+(lastErr&&lastErr.message?lastErr.message:""));
     const base=S.file.name.replace(/\.[^.]+$/,"");
     S.out={blob:new Blob([res.buffer],{type:"video/mp4"}),ext:"mp4",name:`zenmethod_${base}_${S.method}.mp4`};
-    S.engine2=`WebCodecs \u00b7 ${used.cd.kind==="hevc"?"HEVC (H.265)":"H.264"} \u00b7 ${used.d.w}x${used.d.h} \u00b7 ${Math.round(used.cd.br/1e6)} Mbps \u00b7 ${(S.cfr||S.ref)?"60 FPS tetap (sumber "+fps+")":fps+" FPS"}${S.ref?" \u00b7 profil referensi":""} \u00b7 ${dur.toFixed(1)} dtk${aud?"":" \u00b7 tanpa audio"}${used.cd.forced?" \u00b7 dipaksa":""}${used.cd.mult<1?" \u00b7 resolusi diturunkan":""}${kind0==="hevc"&&used.cd.kind==="avc"?" \u00b7 HEVC tidak didukung":""}`;
+    S.engine2=`WebCodecs \u00b7 ${used.cd.kind==="hevc"?"HEVC (H.265)":"H.264"} \u00b7 ${used.d.w}x${used.d.h} \u00b7 ${Math.round(used.cd.br/1e6)} Mbps \u00b7 60 FPS tetap (sumber ${fps})${S.ref?" \u00b7 profil referensi":""} \u00b7 ${dur.toFixed(1)} dtk${aud?"":" \u00b7 tanpa audio"}${used.cd.forced?" \u00b7 dipaksa":""}${used.cd.mult<1?" \u00b7 resolusi diturunkan":""}${kind0==="hevc"&&used.cd.kind==="avc"?" \u00b7 HEVC tidak didukung":""}`;
     S.quota=Math.max(0,S.quota-(S.method==="max"?1:0));
     S.step=4; view();
   }catch(e){ S.step=3; view(); fail(e.message||"Terjadi kesalahan saat merender."); }
