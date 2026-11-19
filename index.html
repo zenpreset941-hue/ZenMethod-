@@ -80,7 +80,7 @@ video,canvas{display:none}
 <body>
 <div class="wrap">
   <header>
-    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v13</small></span></div>
+    <div class="logo"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v14</small></span></div>
     <span style="font-size:26px">&#9776;</span>
   </header>
   <div class="tabs" id="tabs"></div>
@@ -382,10 +382,10 @@ async function process(){
   }catch(e){ S.step=3; view(); fail(e.message||"Terjadi kesalahan saat merender."); }
 }
 
-const T={flip:false,img:null,colors:32,detail:"normal",svgText:"",svgName:"gambar.svg",xmlSrc:"",xmlSrcName:"",xmlOut:"",useFromSvg:false};
+const T={flip:false,holes:"contour",img:null,colors:8,detail:"low",svgText:"",svgName:"gambar.svg",xmlSrc:"",xmlSrcName:"",xmlOut:"",useFromSvg:false};
 function dl(blob,name){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
 function renderTabs(){
-  $("#tabs").innerHTML=[["video","Video"],["svg","Foto \u2192 SVG"],["xml","SVG \u2192 XML"]].map(([k,t])=>`<button data-k="${k}" class="${S.tool===k?"on":""}">${t}</button>`).join("");
+  $("#tabs").innerHTML=[["video","Video"],["svg","Foto \u2192 SVG"],["xml","SVG \u2192 XML"],["full","Foto \u2192 XML"]].map(([k,t])=>`<button data-k="${k}" class="${S.tool===k?"on":""}">${t}</button>`).join("");
   document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{ if(S.tool==="video"&&S.step===3) return; S.tool=b.dataset.k; view(); });
 }
 function fallbackSVG(id,colors){
@@ -411,81 +411,115 @@ async function convertImage(){
   } else svg=fallbackSVG(id,T.colors);
   return {svg,tracer,w,h};
 }
-function parsePathD(d){
+function parsePathSegs(d){
   const tk=d.match(/-?\d*\.?\d+(?:e[-+]?\d+)?|[a-zA-Z]/gi)||[];
   let i=0,cmd="",x=0,y=0,sx=0,sy=0,cur=null; const subs=[];
-  const num=()=>parseFloat(tk[i++]);
-  const isCmd=t=>/^[a-zA-Z]$/.test(t);
-  const start=()=>{if(!cur){cur=[[x,y]];subs.push(cur)}};
+  const num=()=>parseFloat(tk[i++]); const isCmd=t=>/^[a-zA-Z]$/.test(t);
+  const begin=()=>{if(!cur){cur={start:[x,y],segs:[]};subs.push(cur)}};
   while(i<tk.length){
     if(isCmd(tk[i])) cmd=tk[i++]; else if(!cmd) throw new Error("Data path tidak valid.");
     const rel=cmd===cmd.toLowerCase(), C=cmd.toUpperCase();
-    if(C==="Z"){ if(cur) cur.push([sx,sy]); x=sx;y=sy;cur=null; continue; }
-    if(C==="M"){ let nx=num(),ny=num(); if(rel){nx+=x;ny+=y} x=nx;y=ny;sx=x;sy=y;cur=[[x,y]];subs.push(cur); cmd=rel?"l":"L"; continue; }
-    if(C==="L"){ let nx=num(),ny=num(); if(rel){nx+=x;ny+=y} start(); x=nx;y=ny;cur.push([x,y]); continue; }
-    if(C==="H"){ let nx=num(); if(rel)nx+=x; start(); x=nx;cur.push([x,y]); continue; }
-    if(C==="V"){ let ny=num(); if(rel)ny+=y; start(); y=ny;cur.push([x,y]); continue; }
-    if(C==="Q"){ let x1=num(),y1=num(),x2=num(),y2=num(); if(rel){x1+=x;y1+=y;x2+=x;y2+=y} start();
-      for(let k=1;k<=6;k++){const t=k/6,u=1-t;cur.push([u*u*x+2*u*t*x1+t*t*x2,u*u*y+2*u*t*y1+t*t*y2])} x=x2;y=y2; continue; }
-    if(C==="C"){ let x1=num(),y1=num(),x2=num(),y2=num(),x3=num(),y3=num(); if(rel){x1+=x;y1+=y;x2+=x;y2+=y;x3+=x;y3+=y} start();
-      for(let k=1;k<=8;k++){const t=k/8,u=1-t;cur.push([u*u*u*x+3*u*u*t*x1+3*u*t*t*x2+t*t*t*x3,u*u*u*y+3*u*u*t*y1+3*u*t*t*y2+t*t*t*y3])} x=x3;y=y3; continue; }
+    if(C==="Z"){x=sx;y=sy;cur=null;continue}
+    if(C==="M"){let nx=num(),ny=num();if(rel){nx+=x;ny+=y}x=nx;y=ny;sx=x;sy=y;cur={start:[x,y],segs:[]};subs.push(cur);cmd=rel?"l":"L";continue}
+    if(C==="L"){let nx=num(),ny=num();if(rel){nx+=x;ny+=y}begin();x=nx;y=ny;cur.segs.push({t:"L",p:[x,y]});continue}
+    if(C==="H"){let nx=num();if(rel)nx+=x;begin();x=nx;cur.segs.push({t:"L",p:[x,y]});continue}
+    if(C==="V"){let ny=num();if(rel)ny+=y;begin();y=ny;cur.segs.push({t:"L",p:[x,y]});continue}
+    if(C==="Q"){let x1=num(),y1=num(),x2=num(),y2=num();if(rel){x1+=x;y1+=y;x2+=x;y2+=y}begin();
+      cur.segs.push({t:"C",c1:[x+2/3*(x1-x),y+2/3*(y1-y)],c2:[x2+2/3*(x1-x2),y2+2/3*(y1-y2)],p:[x2,y2]});x=x2;y=y2;continue}
+    if(C==="C"){let x1=num(),y1=num(),x2=num(),y2=num(),x3=num(),y3=num();if(rel){x1+=x;y1+=y;x2+=x;y2+=y;x3+=x;y3+=y}begin();
+      cur.segs.push({t:"C",c1:[x1,y1],c2:[x2,y2],p:[x3,y3]});x=x3;y=y3;continue}
     throw new Error("Perintah path '"+cmd+"' belum didukung. Gunakan SVG hasil Foto \u2192 SVG.");
   }
   return subs;
 }
 const _cc=document.createElement("canvas"); _cc.width=_cc.height=1;
 const _cx=_cc.getContext("2d",{willReadFrequently:true});
-function parseColor(v){ _cx.clearRect(0,0,1,1); _cx.fillStyle="#000"; _cx.fillStyle=v; _cx.fillRect(0,0,1,1); const d=_cx.getImageData(0,0,1,1).data; return [d[0],d[1],d[2]]; }
-const f2=n=>{let t=(Math.round(n*100)/100).toFixed(2).replace(/0+$/,"");if(t.endsWith("."))t+="0";return t==="-0.0"?"0.0":t};
-function buildAMXml(doc,name,flip,limit){
+function parseColor(v){_cx.clearRect(0,0,1,1);_cx.fillStyle="#000";_cx.fillStyle=v;_cx.fillRect(0,0,1,1);const d=_cx.getImageData(0,0,1,1).data;return [d[0],d[1],d[2]]}
+const fn=n=>{const r=Math.round(n*100)/100;return String(Object.is(r,-0)?0:r)};
+function buildAMXml(doc,name,o){
   const svg=doc.documentElement;
   let vb=(svg.getAttribute("viewBox")||"").trim().split(/[\s,]+/).map(parseFloat);
-  if(vb.length!==4||vb.some(isNaN)){const w=parseFloat(svg.getAttribute("width")),h=parseFloat(svg.getAttribute("height")); if(!w||!h) throw new Error("SVG tidak punya ukuran (viewBox atau width/height)."); vb=[0,0,w,h]}
+  if(vb.length!==4||vb.some(isNaN)){const w=parseFloat(svg.getAttribute("width")),h=parseFloat(svg.getAttribute("height"));if(!w||!h)throw new Error("SVG tidak punya ukuran (viewBox atau width/height).");vb=[0,0,w,h]}
   const s=1080/Math.max(vb[2],vb[3]);
-  let W=Math.round(vb[2]*s), H=Math.round(vb[3]*s); W-=W%2; H-=H%2;
-  const TT=3000, now=Date.now(), cache=new Map(); let items=[];
+  let W=Math.round(vb[2]*s),H=Math.round(vb[3]*s);W-=W%2;H-=H%2;
+  const tx=q=>[(q[0]-vb[0])*s-W/2,(q[1]-vb[1])*s-H/2];
+  const P=q=>{const t=tx(q);return fn(t[0])+","+fn(t[1])};
+  const sub2d=sp=>"M "+P(sp.start)+sp.segs.map(g=>g.t==="L"?" L "+P(g.p):" C "+P(g.c1)+" "+P(g.c2)+" "+P(g.p)).join("")+" Z";
+  const itrace=/imagetracer/i.test(svg.getAttribute("desc")||"");
+  const TT=3000,now=Date.now(),cache=new Map(),hex=n=>n.toString(16).padStart(2,"0");
+  let items=[],anchors=0;
   for(const p of doc.querySelectorAll("path")){
-    const fill=(p.getAttribute("fill")||"#000").trim(), d=p.getAttribute("d");
+    const fill=(p.getAttribute("fill")||"#000").trim(),d=p.getAttribute("d");
     if(fill==="none"||!d) continue;
-    let rgb=cache.get(fill); if(!rgb){rgb=parseColor(fill);cache.set(fill,rgb)}
+    let rgb=cache.get(fill);if(!rgb){rgb=parseColor(fill);cache.set(fill,rgb)}
     const op=Math.max(0,Math.min(1,parseFloat(p.getAttribute("opacity")??1)*parseFloat(p.getAttribute("fill-opacity")??1)));
-    const subs=parsePathD(d).filter(a=>a.length>2);
+    const subs=parsePathSegs(d).filter(a=>a.segs.length>=2);
     if(!subs.length) continue;
-    const ds=subs.map(a=>{
-      const pts=a.map(([px,py])=>[(px-vb[0])*s-W/2,(py-vb[1])*s-H/2]);
-      const [a0,b0]=pts[0], [an,bn]=pts[pts.length-1];
-      if(Math.abs(a0-an)>0.01||Math.abs(b0-bn)>0.01) pts.push([a0,b0]);
-      return "M "+f2(pts[0][0])+" "+f2(pts[0][1])+pts.slice(1).map(q=>"L "+f2(q[0])+" "+f2(q[1])).join("");
-    }).join("");
-    const hex=n=>n.toString(16).padStart(2,"0");
-    items.push({d:ds,color:"#"+hex(Math.round(op*255))+hex(rgb[0])+hex(rgb[1])+hex(rgb[2])});
+    items.push({subs,holes:itrace,n:subs.length,color:"#"+hex(Math.round(op*255))+hex(rgb[0])+hex(rgb[1])+hex(rgb[2])});
   }
   const total=items.length;
   if(!total) throw new Error("Tidak ada jalur <path> berwarna di SVG ini.");
-  if(flip) items.reverse();
-  items=items.slice(0,limit);
-  const ignored=doc.querySelectorAll("rect,circle,ellipse,polygon,polyline,line,image,text,[transform]").length;
+  if(o.test){const wh=items.filter(i=>i.n>1),nh=items.filter(i=>i.n===1);items=[...wh.slice(0,6),...nh.slice(0,4)].slice(0,10)}
+  if(o.flip) items.reverse();
+  items=items.slice(0,o.limit);
+  items.forEach(it=>it.subs.forEach(sp=>anchors+=1+sp.segs.length));
   const loc=`${(W/2).toFixed(6)},${(H/2).toFixed(6)},0.000000`;
+  const pathXml=it=>{
+    if(it.n===1) return `    <path d="${sub2d(it.subs[0])}" />\r\n`;
+    if(o.holes==="single") return `    <path d="${it.subs.map(sub2d).join(" ")}" />\r\n`;
+    return "    <path>\r\n"+it.subs.map((sp,k)=>`      <contour ${(it.holes&&k>0)?'exclude="true" ':''}d="${sub2d(sp)}" />\r\n`).join("")+"    </path>\r\n";
+  };
   const xml="<?xml version='1.0' encoding='UTF-8' ?><!--\nCreated by ZenMethod\n-->\r\n"+
     `<scene title="${esc(name)}" width="${W}" height="${H}" exportWidth="${W}" exportHeight="${H}" precompose="dynamicResolution" bgcolor="#ff000000" totalTime="${TT}" fps="30" modifiedTime="${now}" amver="1028425" ffver="106" am="com.alightcreative.motion/5.0.273.1028425" amplatform="android" retime="freeze" retimeAdaptFPS="false">\r\n`+
-    items.map((it,i)=>`  <shape id="${now+i}" label="Bentuk ${i+1}" startTime="0" endTime="${TT}" fillType="color" mediaFillMode="fill">\r\n    <transform>\r\n      <location value="${loc}" />\r\n    </transform>\r\n    <fillColor value="${it.color}" />\r\n    <path d="${it.d}" />\r\n  </shape>\r\n`).join("")+
-    "</scene>";
-  return {xml,count:items.length,total,W,H,ignored};
+    items.map((it,i)=>`  <shape id="${now+i}" label="path ${i+1}" startTime="0" endTime="${TT}" fillType="color" mediaFillMode="fill">\r\n    <transform>\r\n      <location value="${loc}" />\r\n    </transform>\r\n    <fillColor value="${it.color}" />\r\n${pathXml(it)}  </shape>\r\n`).join("")+"</scene>";
+  const ignored=doc.querySelectorAll("rect,circle,ellipse,polygon,polyline,line,image,text,[transform]").length;
+  return {xml,count:items.length,total,W,H,ignored,anchors};
+}
+function optsHtml(){return `<div class="codec"><span>Urutan layer</span><div id="fl"><button data-fl="0" class="${!T.flip?"on":""}">Normal</button><button data-fl="1" class="${T.flip?"on":""}">Balik</button></div></div>
+      <div class="codec"><span>Lubang</span><div id="ho"><button data-ho="contour" class="${T.holes==="contour"?"on":""}">Kontur</button><button data-ho="single" class="${T.holes==="single"?"on":""}">Satu jalur</button></div></div>`}
+function bindOpts(){
+  document.querySelectorAll("#fl button").forEach(b=>b.onclick=()=>{T.flip=b.dataset.fl==="1";document.querySelectorAll("#fl button").forEach(x=>x.classList.toggle("on",x===b))});
+  document.querySelectorAll("#ho button").forEach(b=>b.onclick=()=>{T.holes=b.dataset.ho;document.querySelectorAll("#ho button").forEach(x=>x.classList.toggle("on",x===b))});
+}
+function copyText(t){return (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).catch(()=>{const a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();document.execCommand("copy");a.remove()})}
+function showXml(el,svgText,name){
+  const doc=new DOMParser().parseFromString(svgText,"image/svg+xml");
+  if(doc.querySelector("parsererror")||doc.documentElement.localName!=="svg") throw new Error("File SVG tidak valid.");
+  doc.querySelectorAll("script,foreignObject").forEach(n=>n.remove());
+  const o={flip:T.flip,holes:T.holes};
+  const full=buildAMXml(doc,name,{...o,limit:Infinity}),test=buildAMXml(doc,name+" tes",{...o,limit:10,test:true});
+  const svgOut=new XMLSerializer().serializeToString(doc.documentElement);
+  const warn=[];
+  if(full.count>200) warn.push("Jumlah bentuk banyak ("+full.count+"). Kurangi jumlah warna supaya Alight Motion tidak berat.");
+  if(full.ignored) warn.push(full.ignored+" elemen non-path atau bertransform diabaikan.");
+  el.innerHTML=`<div class="file"><div style="text-align:left"><b>${esc(name)}.xml</b><small>${full.count} bentuk &middot; ${(full.xml.length/1024).toFixed(0)} KB &middot; ${full.W}x${full.H}</small></div><em>Siap</em></div>
+    <p class="sub" style="font-size:13px;margin-top:10px">Selesai &#10003; &middot; &plusmn;${full.anchors} titik anchor</p>
+    ${warn.map(w=>`<p class="sub" style="font-size:13px;margin-top:8px;color:#f6c744">${esc(w)}</p>`).join("")}
+    <div style="display:flex;gap:10px;margin-top:14px"><button class="btn ghost" id="cpx" style="margin:0">Copy</button><button class="btn" id="dxml" style="margin:0;justify-content:center">Download</button></div>
+    <button class="btn ghost" id="dtest">Unduh XML tes (10 bentuk)</button>
+    <button class="btn ghost" id="dsvg2">Unduh SVG juga</button>`;
+  $("#cpx").onclick=()=>copyText(full.xml).then(()=>{$("#cpx").textContent="Tersalin"});
+  $("#dxml").onclick=()=>dl(new Blob([full.xml],{type:"application/xml"}),name+".xml");
+  $("#dtest").onclick=()=>dl(new Blob([test.xml],{type:"application/xml"}),name+"_tes.xml");
+  $("#dsvg2").onclick=()=>dl(new Blob([svgOut],{type:"image/svg+xml"}),name+".svg");
 }
 
 function viewTool(){
   const a=$("#app");
-  if(S.tool==="svg"){
+  if(S.tool==="svg"||S.tool==="full"){
+    const full=S.tool==="full", BL=full?"Proses":"Ubah ke SVG";
     a.innerHTML=`<section class="panel">
-      <div class="hd"><div class="num">F</div><div><h1>Foto &rarr; SVG</h1><p class="sub">Ubah JPG, PNG, atau WebP menjadi gambar vektor.</p></div></div>
+      <div class="hd"><div class="num">F</div><div>${full?'<h1>Foto &rarr; XML</h1><p class="sub">Foto langsung jadi XML Alight Motion.</p>':'<h1>Foto &rarr; SVG</h1><p class="sub">Ubah JPG, PNG, atau WebP menjadi gambar vektor.</p>'}</div></div>
       <div class="drop" id="idrop"><div class="plus">+</div><b>Pilih foto</b><span>atau seret &amp; lepas file di sini</span></div>
       <input type="file" id="ifile" accept="image/*" hidden>
       <div class="fileinfo" id="ifi"></div>
       <div class="codec"><span>Jumlah warna: <b id="cn">${T.colors}</b></span><input type="range" id="cols" min="2" max="64" value="${T.colors}" style="flex:1;accent-color:#f6c744"></div>
       <div class="codec"><span>Detail</span><div id="dt">${[["low","Rendah"],["normal","Sedang"],["high","Tinggi"]].map(([k,t])=>`<button data-d="${k}" class="${T.detail===k?"on":""}">${t}</button>`).join("")}</div></div>
+      ${full?optsHtml():""}
       <div class="err" id="terr"></div>
-      <button class="btn" id="conv"${T.img?"":" disabled"}>Ubah ke SVG <span>&rarr;</span></button>
+      <button class="btn" id="conv"${T.img?"":" disabled"}>${BL} <span>&rarr;</span></button>
       <div id="res"></div></section>`;
+    if(full) bindOpts();
     const drop=$("#idrop"), f=$("#ifile");
     const setImg=file=>{ if(!file) return; if(!file.type.startsWith("image/")){const e=$("#terr");e.textContent="File harus berupa gambar.";e.style.display="block";return} T.img=file; const fi=$("#ifi"); fi.style.display="block"; fi.textContent=file.name+" \u2014 "+(file.size/1048576).toFixed(1)+" MB"; $("#conv").disabled=false; $("#terr").style.display="none"; };
     drop.onclick=()=>f.click(); f.onchange=()=>setImg(f.files[0]);
@@ -499,14 +533,16 @@ function viewTool(){
       const btn=$("#conv"), e=$("#terr"); e.style.display="none"; btn.disabled=true; btn.firstChild.textContent="Memproses... ";
       try{
         const r=await convertImage(); T.svgText=r.svg; T.svgName=T.img.name.replace(/\.[^.]+$/,"")+".svg";
+        if(full){showXml($("#res"),r.svg,T.svgName.replace(/\.[^.]+$/,""))}else{
         const url=URL.createObjectURL(new Blob([r.svg],{type:"image/svg+xml"}));
         $("#res").innerHTML=`<div class="file" style="flex-direction:column;align-items:stretch"><img src="${url}" style="max-width:100%;background:#fff;border-radius:12px"><small style="margin-top:10px">${(r.svg.length/1024).toFixed(0)} KB &middot; ${r.w}x${r.h}${r.tracer?"":" &middot; mode sederhana (library tracing gagal dimuat)"}</small></div>
           <button class="btn" id="dsvg">Unduh SVG <span>&darr;</span></button>
           <button class="btn ghost" id="tox">Lanjut ke SVG &rarr; XML</button>`;
         $("#dsvg").onclick=()=>dl(new Blob([T.svgText],{type:"image/svg+xml"}),T.svgName);
         $("#tox").onclick=()=>{T.useFromSvg=true;S.tool="xml";view()};
+        }
       }catch(err){e.textContent="Gagal mengubah gambar: "+(err.message||err);e.style.display="block"}
-      btn.disabled=false; btn.firstChild.textContent="Ubah ke SVG ";
+      btn.disabled=false; btn.firstChild.textContent=BL+" ";
     };
   }
   if(S.tool==="xml"){
@@ -514,8 +550,8 @@ function viewTool(){
     a.innerHTML=`<section class="panel">
       <div class="hd"><div class="num">X</div><div><h1>SVG &rarr; XML</h1><p class="sub">Ubah file SVG menjadi XML Alight Motion.</p></div></div>
       ${hasPrev?`<div class="fileinfo" style="display:block">Memakai SVG dari langkah sebelumnya: ${esc(T.svgName)}</div><button class="btn ghost" id="other" style="margin-top:12px">Pilih file SVG lain</button>`:`<div class="drop" id="xdrop"><div class="plus">+</div><b>Pilih file SVG</b><span>atau seret &amp; lepas file di sini</span></div><input type="file" id="xfile" accept=".svg,image/svg+xml" hidden><div class="fileinfo" id="xfi"></div>`}
-      <div class="remind" style="margin-top:18px"><div class="tag">CATATAN ALIGHT MOTION</div><p class="sub" style="margin-top:8px;font-size:13px">Format XML mengikuti contoh dari Alight Motion 5.0.273. Setiap jalur SVG menjadi satu bentuk. Coba dulu <b style="color:#fde68a">XML tes (10 bentuk)</b>. Kalau latar menutupi gambar, pilih Urutan layer: Balik.</p></div>
-      <div class="codec"><span>Urutan layer</span><div id="fl"><button data-fl="0" class="${!T.flip?"on":""}">Normal</button><button data-fl="1" class="${T.flip?"on":""}">Balik</button></div></div>
+      <div class="remind" style="margin-top:18px"><div class="tag">CATATAN ALIGHT MOTION</div><p class="sub" style="margin-top:8px;font-size:13px">Setiap jalur SVG menjadi satu bentuk dengan kurva asli. Lubang memakai contour exclude. Coba dulu <b style="color:#fde68a">XML tes (10 bentuk)</b>. Kalau latar menutupi gambar, pilih Urutan layer: Balik. Kalau lubang bermasalah, ganti Lubang: Satu jalur.</p></div>
+      ${optsHtml()}
       <div class="err" id="xerr"></div>
       <button class="btn" id="xconv"${hasPrev?"":" disabled"}>Ubah ke XML <span>&rarr;</span></button>
       <div id="xres"></div></section>`;
@@ -528,25 +564,12 @@ function viewTool(){
       ["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove("over")}));
       drop.addEventListener("drop",ev=>setF(ev.dataTransfer.files[0]));
     }
-    document.querySelectorAll("#fl button").forEach(b=>b.onclick=()=>{T.flip=b.dataset.fl==="1";document.querySelectorAll("#fl button").forEach(x=>x.classList.toggle("on",x===b))});
+    bindOpts();
     $("#xconv").onclick=()=>{
       const e=$("#xerr"); e.style.display="none";
       try{
         const src=hasPrev?T.svgText:T.xmlSrc, name=(hasPrev?T.svgName:T.xmlSrcName).replace(/\.[^.]+$/,"");
-        const doc=new DOMParser().parseFromString(src,"image/svg+xml");
-        if(doc.querySelector("parsererror")||doc.documentElement.localName!=="svg") throw new Error("File SVG tidak valid.");
-        doc.querySelectorAll("script,foreignObject").forEach(n=>n.remove());
-        const full=buildAMXml(doc,name,T.flip,Infinity), test=buildAMXml(doc,name+" tes",T.flip,10);
-        const svgOut=new XMLSerializer().serializeToString(doc.documentElement);
-        const warn=[]; if(full.count>500) warn.push("Jumlah bentuk banyak ("+full.count+"). Alight Motion bisa berat atau menolak. Kurangi warna dan detail di Foto \u2192 SVG."); if(full.ignored) warn.push(full.ignored+" elemen non-path atau bertransform diabaikan.");
-        $("#xres").innerHTML=`<div class="file"><div style="text-align:left"><b>${esc(name)}.xml</b><small>${full.count} bentuk &middot; ${(full.xml.length/1024).toFixed(0)} KB &middot; ${full.W}x${full.H}</small></div><em>Siap</em></div>
-          ${warn.map(w=>`<p class="sub" style="font-size:13px;margin-top:10px;color:#f6c744">${esc(w)}</p>`).join("")}
-          <button class="btn" id="dxml">Unduh XML <span>&darr;</span></button>
-          <button class="btn ghost" id="dtest">Unduh XML tes (10 bentuk)</button>
-          <button class="btn ghost" id="dsvg2">Unduh SVG juga</button>`;
-        $("#dxml").onclick=()=>dl(new Blob([full.xml],{type:"application/xml"}),name+".xml");
-        $("#dtest").onclick=()=>dl(new Blob([test.xml],{type:"application/xml"}),name+"_tes.xml");
-        $("#dsvg2").onclick=()=>dl(new Blob([svgOut],{type:"image/svg+xml"}),name+".svg");
+        showXml($("#xres"),src,name);
       }catch(err){e.textContent=err.message||String(err);e.style.display="block"}
     };
   }
