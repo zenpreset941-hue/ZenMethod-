@@ -186,6 +186,7 @@ function view(){
     a.innerHTML = `<section class="panel center">
       <div class="tag">RENDER SELESAI</div><h1>Videomu sudah siap</h1>
       <p class="sub">${S.job?S.job.name:METHODS[S.method].name} berhasil diselesaikan.</p><p class="sub" style="font-size:13px">Engine: ${esc(S.engine2||"-")}</p>
+      <div id="vcmp" style="margin:18px 0"></div>
       <div class="file"><div style="text-align:left;min-width:0"><div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:210px;font-weight:700">${esc(S.out.name)}</div><small>${(S.out.blob.size/1048576).toFixed(1)} MB &middot; ${S.out.ext.toUpperCase()}</small></div><em>Siap</em></div>
       <div class="remind"><div class="tag">PENGINGAT CEPAT</div><h3>Sebelum mengunggah ke TikTok</h3>
         <ul><li>Gunakan TikTok Web (mode Desktop aktif)</li><li>Jangan edit, crop, atau tambah musik</li><li>Gunakan <b>#ZenMethod</b> untuk mendukung kami</li></ul></div>
@@ -193,6 +194,7 @@ function view(){
       <button class="btn ghost" id="again">&#8635;&nbsp; Proses video lain</button>
     </section>`;
     $("#dl").onclick=()=>{const a=document.createElement("a");a.href=URL.createObjectURL(S.out.blob);a.download=S.out.name;a.click()};
+    showVideoCompare();
     $("#again").onclick=()=>{if(S.job){S.job=null;S.tool="up"}Object.assign(S,{step:1,file:null,url:"",extra:null,out:null,progress:0});view()};
   }
 }
@@ -338,6 +340,48 @@ async function runPass0(rate,c,setP){
   if(aud) aud.chunks.forEach(([ch,m])=>muxer.addAudioChunk(ch,m));
   muxer.finalize();
   return {buffer:target.buffer,drops,n:times.length};
+}
+function seekV(v,t){return new Promise(res=>{const d=()=>{v.removeEventListener("seeked",d);res()};v.addEventListener("seeked",d);v.currentTime=t;setTimeout(d,4000)})}
+async function grabFrame(url,t){
+  const v=document.createElement("video"); v.muted=true; v.playsInline=true; v.preload="auto"; v.src=url;
+  await new Promise((res,rej)=>{v.onloadeddata=res;v.onerror=()=>rej(new Error("video tidak terbaca"))});
+  const tt=t!=null?t:(v.duration||0)/2; await seekV(v,Math.min(tt,Math.max(0,(v.duration||tt)-0.05))); await new Promise(r=>setTimeout(r,150));
+  const w=v.videoWidth,h=v.videoHeight, c=document.createElement("canvas"); c.width=w; c.height=h;
+  c.getContext("2d").drawImage(v,0,0,w,h);
+  const out={url:c.toDataURL("image/jpeg",0.92),w,h,t:v.currentTime,dur:v.duration}; v.removeAttribute("src"); v.load(); return out;
+}
+function compareHTML(id,afterUrl,beforeUrl,info){
+  return `<div class="file" style="flex-direction:column;align-items:stretch;padding:12px;text-align:left">
+    <div id="${id}" style="position:relative;overflow:hidden;border-radius:12px;background:#222;touch-action:pan-y;user-select:none;-webkit-user-select:none">
+      <img src="${afterUrl}" style="display:block;width:100%" draggable="false">
+      <img id="${id}b" src="${beforeUrl}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:fill;clip-path:inset(0 50% 0 0)" draggable="false">
+      <div id="${id}h" style="position:absolute;top:0;bottom:0;left:50%;width:2px;background:#f6c744;transform:translateX(-1px);pointer-events:none"><div style="position:absolute;top:50%;left:50%;width:38px;height:38px;margin:-19px;border-radius:50%;background:#f6c744;color:#111;display:grid;place-items:center;font-weight:800">&harr;</div></div>
+      <span style="position:absolute;top:8px;left:8px;background:#000b;padding:4px 10px;border-radius:10px;font-size:12px;font-weight:700">SEBELUM</span>
+      <span style="position:absolute;top:8px;right:8px;background:#f6c744;color:#111;padding:4px 10px;border-radius:10px;font-size:12px;font-weight:800">SESUDAH</span>
+    </div>
+    <input type="range" id="${id}r" min="0" max="100" value="50" style="width:100%;margin-top:14px;accent-color:#f6c744">
+    <small style="margin-top:8px;color:#8d8d94">${info}</small></div>`;
+}
+function bindCompare(id){
+  const ba=$("#"+id), bf=$("#"+id+"b"), hd=$("#"+id+"h"), rg=$("#"+id+"r");
+  const setPos=q=>{q=Math.max(0,Math.min(100,q));bf.style.clipPath=`inset(0 ${100-q}% 0 0)`;hd.style.left=q+"%";rg.value=q};
+  rg.oninput=()=>setPos(+rg.value);
+  let drag=false; const fromEv=e=>{const bx=ba.getBoundingClientRect();setPos((e.clientX-bx.left)/bx.width*100)};
+  ba.addEventListener("pointerdown",e=>{drag=true;try{ba.setPointerCapture(e.pointerId)}catch(_){}fromEv(e)});
+  ba.addEventListener("pointermove",e=>{if(drag)fromEv(e)});
+  ["pointerup","pointercancel"].forEach(ev=>ba.addEventListener(ev,()=>{drag=false}));
+}
+async function showVideoCompare(){
+  const box=$("#vcmp"); if(!box||!S.out||!S.file) return;
+  box.innerHTML='<p class="sub" style="font-size:13px">Menyiapkan perbandingan sebelum &amp; sesudah...</p>';
+  const u1=URL.createObjectURL(S.file), u2=URL.createObjectURL(S.out.blob);
+  try{
+    const after=await grabFrame(u2), before=await grabFrame(u1,after.t);
+    if(S.step!==4||!$("#vcmp")) return;
+    box.innerHTML=compareHTML("vcmp1",after.url,before.url,`Geser untuk membandingkan &middot; sebelum ${before.w}x${before.h} &middot; sesudah ${after.w}x${after.h} &middot; frame di detik ${after.t.toFixed(1)}`);
+    bindCompare("vcmp1");
+  }catch(e){ if($("#vcmp")) box.innerHTML='<p class="sub" style="font-size:13px">Perbandingan tidak bisa ditampilkan: '+esc(e.message||e)+'</p>'; }
+  finally{ URL.revokeObjectURL(u1); URL.revokeObjectURL(u2); }
 }
 async function process(){
   closeModal(); S.step=3; view();
