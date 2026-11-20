@@ -577,11 +577,24 @@ function vibrance(data,amt){
   }
 }
 const AI={ver:"1.0.0-beta.10",models:{}};
-async function loadAI(sc,say){
+async function ensureTF(say){
   if(!window.tf){
     say("Memuat TensorFlow...");
     if(!await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js")) throw new Error("TensorFlow.js gagal dimuat, cek internet");
   }
+}
+async function useBackend(name){
+  try{
+    if(name==="wasm"&&!(window.tf&&tf.wasm)){
+      if(!await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.11.0/dist/tf-backend-wasm.min.js")) return false;
+    }
+    if(name==="wasm"&&tf.wasm&&tf.wasm.setWasmPaths) tf.wasm.setWasmPaths("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.11.0/dist/");
+    await tf.setBackend(name); await tf.ready();
+    return tf.getBackend()===name;
+  }catch(e){return false}
+}
+async function loadAI(sc,say){
+  await ensureTF(say);
   if(!AI.models[sc]){
     say("Memuat model AI...");
     try{ AI.models[sc]=await tf.loadLayersModel(`https://cdn.jsdelivr.net/npm/@upscalerjs/esrgan-slim@${AI.ver}/models/x${sc}/model.json`); }
@@ -590,6 +603,20 @@ async function loadAI(sc,say){
   return AI.models[sc];
 }
 async function aiUpscale(src,sc,say){
+  await ensureTF(say);
+  const order=["webgl","wasm","cpu"]; if(AI.good) order.sort((a,b)=>(b===AI.good)-(a===AI.good));
+  let lastErr=null;
+  for(const b of order){
+    try{
+      say("Menyiapkan AI ("+b+")...");
+      if(!await useBackend(b)) throw new Error("backend "+b+" tidak tersedia");
+      Object.values(AI.models).forEach(m=>{try{m.dispose()}catch(_){}}); AI.models={};
+      const r=await aiRun(src,sc,say); AI.good=b; AI.used=b; return r;
+    }catch(e){ lastErr=e; }
+  }
+  throw lastErr||new Error("AI gagal");
+}
+async function aiRun(src,sc,say){
   const model=await loadAI(sc,say), W=src.width, H=src.height, TS=64, PAD=8;
   const out=document.createElement("canvas"); out.width=W*sc; out.height=H*sc;
   const octx=out.getContext("2d"), sctx=src.getContext("2d",{willReadFrequently:true});
@@ -698,7 +725,7 @@ function viewTool(){
             <span style="position:absolute;top:8px;right:8px;background:#f6c744;color:#111;padding:4px 10px;border-radius:10px;font-size:12px;font-weight:800">SESUDAH</span>
           </div>
           <input type="range" id="pcmp" min="0" max="100" value="50" style="width:100%;margin-top:14px;accent-color:#f6c744">
-          <small style="margin-top:8px;color:#8d8d94">Geser untuk membandingkan &middot; ${r.w}x${r.h} &middot; ${(png.size/1048576).toFixed(1)} MB (PNG)${r.ai?" &middot; AI ESRGAN":(r.aiError?" &middot; AI gagal ("+esc(r.aiError)+"), memakai UHD+":"")}${r.limited?" &middot; ukuran dibatasi 16 MP agar HP tidak kehabisan memori":""}</small></div>
+          <small style="margin-top:8px;color:#8d8d94">Geser untuk membandingkan &middot; ${r.w}x${r.h} &middot; ${(png.size/1048576).toFixed(1)} MB (PNG)${r.ai?" &middot; AI ESRGAN ("+(AI.used||"")+")":(r.aiError?" &middot; AI gagal ("+esc(r.aiError)+"), memakai UHD+":"")}${r.limited?" &middot; ukuran dibatasi 16 MP agar HP tidak kehabisan memori":""}</small></div>
           <button class="btn" id="ppng">Unduh PNG <span>&darr;</span></button>
           <button class="btn ghost" id="pjpg">Unduh JPG (lebih kecil)</button>`;
         const ba=$("#ba"), bf=$("#pbefore"), hd=$("#phd"), rg=$("#pcmp");
