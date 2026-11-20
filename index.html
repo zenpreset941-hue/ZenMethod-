@@ -72,6 +72,7 @@ input[type=url]:focus{border-color:var(--gold)}
 .codec button.on{background:var(--gold);color:#111}
 .tabs{display:flex;gap:8px;margin-bottom:18px;overflow-x:auto}.tabs button{flex:none;background:#151517;border:1px solid #2c2c30;color:#ccc;border-radius:14px;padding:12px 16px;font-weight:700;font-size:14px;cursor:pointer}.tabs button.on{background:var(--gold);color:#111;border-color:var(--gold)}
 .menu{display:grid;gap:14px;margin-top:20px}.card{display:flex;align-items:center;gap:16px;width:100%;text-align:left;color:#fff;cursor:pointer;background:linear-gradient(135deg,#1c170b,#121214);border:1px solid var(--line);border-radius:18px;padding:20px;font-family:inherit;transition:.15s}.card:active{transform:scale(.98);border-color:var(--gold)}.card .ic{width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,var(--gold2),var(--gold3));color:#111;display:grid;place-items:center;font-weight:900;font-size:18px;flex:none}.card h3{font-size:19px}.card p{color:var(--mut);font-size:14px;margin-top:4px;line-height:1.4}.card .arr{margin-left:auto;color:var(--gold);font-size:22px}
+.backbtn{display:inline-flex;align-items:center;gap:8px;background:#121214;border:1px solid var(--line);color:var(--gold);border-radius:16px;padding:12px 18px;font-size:16px;font-weight:800;cursor:pointer;margin-bottom:16px;font-family:inherit}.backbtn:active{border-color:var(--gold)}.backbtn:disabled{opacity:.4;cursor:not-allowed}
 .err{color:#ff8a8a;margin-top:14px;font-size:14px;display:none}
 video,canvas{display:none}
 </style>
@@ -84,6 +85,7 @@ video,canvas{display:none}
     <div class="logo" id="logo" style="cursor:pointer"><i>ZM</i><span>ZEN<b>METHOD</b> <small style="color:#8d8d94;font-weight:500;letter-spacing:0">v19</small></span></div>
     <span style="font-size:26px">&#9776;</span>
   </header>
+  <div id="backbar"></div>
   <div class="tabs" id="tabs"></div>
   <div class="steps" id="steps"></div>
   <main id="app"></main>
@@ -111,6 +113,13 @@ function renderSteps(){
 
 function view(){
   renderTabs();
+  const bb=$("#backbar");
+  if(S.tool==="home") bb.innerHTML="";
+  else{
+    const busy=S.tool==="video"&&S.step===3;
+    bb.innerHTML=`<button class="backbtn" id="backhome"${busy?" disabled":""}>&larr; Kembali</button>`;
+    $("#backhome").onclick=()=>{ if(busy) return; S.tool="home"; view(); };
+  }
   if(S.tool==="home"){ $("#tabs").innerHTML=""; $("#steps").innerHTML=""; return viewHome(); }
   if(S.tool!=="video"){ $("#steps").innerHTML=""; return viewTool(); }
   renderSteps();
@@ -385,7 +394,7 @@ async function process(){
   }catch(e){ S.step=3; view(); fail(e.message||"Terjadi kesalahan saat merender."); }
 }
 
-const T={ph:{scale:2,sharp:60,denoise:1,auto:0,file:null},up:{res:1080,fps:60,file:null},flip:false,holes:"contour",img:null,colors:8,detail:"low",svgText:"",svgName:"gambar.svg",xmlSrc:"",xmlSrcName:"",xmlOut:"",useFromSvg:false};
+const T={ph:{scale:2,sharp:60,denoise:1,auto:0,mode:2,file:null},up:{res:1080,fps:60,file:null},flip:false,holes:"contour",img:null,colors:8,detail:"low",svgText:"",svgName:"gambar.svg",xmlSrc:"",xmlSrcName:"",xmlOut:"",useFromSvg:false};
 function dl(blob,name){const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
 function renderTabs(){
   $("#tabs").innerHTML=""; return;
@@ -560,6 +569,44 @@ function autoLevels(data,w,h){
     data[i]=y+(r-y)*1.08; data[i+1]=y+(g-y)*1.08; data[i+2]=y+(b-y)*1.08;
   }
 }
+function vibrance(data,amt){
+  for(let i=0;i<data.length;i+=4){
+    const r=data[i],g=data[i+1],b=data[i+2], mx=Math.max(r,g,b), mn=Math.min(r,g,b);
+    const sat=mx?(mx-mn)/mx:0, y=0.299*r+0.587*g+0.114*b, k=1+amt*(1-sat);
+    data[i]=y+(r-y)*k; data[i+1]=y+(g-y)*k; data[i+2]=y+(b-y)*k;
+  }
+}
+const AI={ver:"1.0.0-beta.10",models:{}};
+async function loadAI(sc,say){
+  if(!window.tf){
+    say("Memuat TensorFlow...");
+    if(!await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js")) throw new Error("TensorFlow.js gagal dimuat, cek internet");
+  }
+  if(!AI.models[sc]){
+    say("Memuat model AI...");
+    try{ AI.models[sc]=await tf.loadLayersModel(`https://cdn.jsdelivr.net/npm/@upscalerjs/esrgan-slim@${AI.ver}/models/x${sc}/model.json`); }
+    catch(e){ throw new Error("model AI gagal dimuat, cek internet") }
+  }
+  return AI.models[sc];
+}
+async function aiUpscale(src,sc,say){
+  const model=await loadAI(sc,say), W=src.width, H=src.height, TS=64, PAD=8;
+  const out=document.createElement("canvas"); out.width=W*sc; out.height=H*sc;
+  const octx=out.getContext("2d"), sctx=src.getContext("2d",{willReadFrequently:true});
+  const total=Math.ceil(W/TS)*Math.ceil(H/TS); let n=0;
+  for(let ty=0;ty<H;ty+=TS) for(let tx=0;tx<W;tx+=TS){
+    const x0=Math.max(0,tx-PAD), y0=Math.max(0,ty-PAD), x1=Math.min(W,tx+TS+PAD), y1=Math.min(H,ty+TS+PAD);
+    const w=x1-x0, h=y1-y0, id=sctx.getImageData(x0,y0,w,h);
+    const y=tf.tidy(()=>{ const x=tf.browser.fromPixels(id).toFloat().expandDims(0); return model.predict(x).squeeze().clipByValue(0,255); });
+    const d=await y.data(); y.dispose();
+    const ow=w*sc, oh=h*sc, img=new ImageData(ow,oh);
+    for(let i=0,j=0;i<ow*oh;i++,j+=3){const k=i*4;img.data[k]=d[j];img.data[k+1]=d[j+1];img.data[k+2]=d[j+2];img.data[k+3]=255}
+    octx.putImageData(img,x0*sc,y0*sc,(tx-x0)*sc,(ty-y0)*sc,Math.min(TS,W-tx)*sc,Math.min(TS,H-ty)*sc);
+    n++; say("AI "+Math.round(n/total*100)+"%");
+    await tick();
+  }
+  return out;
+}
 async function enhancePhoto(file,o,say){
   const bmp=await createImageBitmap(file), MAX=16e6;
   let W=bmp.width,H=bmp.height; const resized=W*H>MAX;
@@ -572,9 +619,18 @@ async function enhancePhoto(file,o,say){
     if(o.denoise){say("Mengurangi noise...");await tick();denoiseImg(id.data,W,H)}
     x0.putImageData(id,0,0);
   }
-  const sc=Math.min(o.scale,Math.sqrt(MAX/(W*H))), tw=Math.round(W*sc), th=Math.round(H*sc);
-  let cur=c0,cw=W,ch=H;
-  if(tw>W||th>H){ say("Memperbesar..."); await tick(); }
+  let sc=Math.min(o.scale,Math.sqrt(MAX/(W*H))), tw=Math.round(W*sc), th=Math.round(H*sc);
+  let cur=c0,cw=W,ch=H,aiDone=false;
+  if(o.ai&&o.scale>=2){
+    try{
+      const k=Math.min(4,Math.round(o.scale)), f=Math.sqrt(MAX/(W*H*k*k));
+      const sw=f<1?Math.max(16,Math.floor(W*f)):W, sh=f<1?Math.max(16,Math.floor(H*f)):H;
+      const flat=document.createElement("canvas"); flat.width=sw; flat.height=sh;
+      const fx=flat.getContext("2d",{willReadFrequently:true}); fx.fillStyle="#fff"; fx.fillRect(0,0,sw,sh); fx.imageSmoothingQuality="high"; fx.drawImage(c0,0,0,sw,sh);
+      cur=await aiUpscale(flat,k,say); cw=cur.width; ch=cur.height; aiDone=true; sc=cw/W; tw=cw; th=ch;
+    }catch(e){ o.aiError=e.message||String(e); cur=c0; cw=W; ch=H; say("AI gagal, pakai UHD+..."); await tick(); }
+  }
+  if(!aiDone&&(tw>W||th>H)){ say("Memperbesar..."); await tick(); }
   while(cw<tw||ch<th){
     const nw=Math.min(tw,cw*2), nh=Math.min(th,ch*2);
     const c=document.createElement("canvas"); c.width=nw; c.height=nh;
@@ -586,7 +642,14 @@ async function enhancePhoto(file,o,say){
     const xf=cur.getContext("2d",{willReadFrequently:true}), id=xf.getImageData(0,0,cw,ch);
     unsharp(id.data,cw,ch,0.7+0.45*sc,o.sharp/100*1.3); xf.putImageData(id,0,0);
   }
-  return {canvas:cur,w:cw,h:ch,sc,limited:sc<o.scale-0.01||resized};
+  if(o.uhd){
+    say("Mode UHD+..."); await tick();
+    const xf=cur.getContext("2d",{willReadFrequently:true}), id=xf.getImageData(0,0,cw,ch);
+    unsharp(id.data,cw,ch,Math.max(6,Math.min(cw,ch)/90),0.30);
+    vibrance(id.data,0.35);
+    xf.putImageData(id,0,0);
+  }
+  return {canvas:cur,w:cw,h:ch,sc,ai:aiDone,aiError:o.aiError,limited:sc<o.scale-0.01||resized};
 }
 
 function viewTool(){
@@ -598,11 +661,12 @@ function viewTool(){
       <div class="drop" id="pdrop"><div class="plus">+</div><b>Pilih foto</b><span>JPG, PNG, atau WebP</span></div>
       <input type="file" id="pfile" accept="image/*" hidden>
       <div class="fileinfo" id="pfi"></div>
+      <div class="codec"><span>Kualitas</span><div id="pm">${seg("m",[[0,"Standar"],[1,"UHD+"],[2,"UHD AI"]],P.mode)}</div></div>
       <div class="codec"><span>Perbesar</span><div id="ps">${seg("s",[[1,"1&times;"],[2,"2&times;"],[3,"3&times;"],[4,"4&times;"]],P.scale)}</div></div>
       <div class="codec"><span>Ketajaman: <b id="shn">${P.sharp}</b></span><input type="range" id="shp" min="0" max="100" value="${P.sharp}" style="flex:1;accent-color:#f6c744"></div>
       <div class="codec"><span>Kurangi noise</span><div id="pd">${seg("d",[[0,"Mati"],[1,"Hidup"]],P.denoise)}</div></div>
       <div class="codec"><span>Perbaiki warna</span><div id="pa">${seg("a",[[0,"Mati"],[1,"Hidup"]],P.auto)}</div></div>
-      <p class="sub" style="font-size:12px;margin-top:12px;line-height:1.5">Foto dijernihkan dengan memperbesar, mempertajam, dan mengurangi noise (bukan AI). Hasilnya paling baik untuk foto yang agak buram. Wajah, teks, atau foto yang sangat buram tidak bisa dipulihkan detailnya.</p>
+      <p class="sub" style="font-size:12px;margin-top:12px;line-height:1.5"><b>UHD AI</b> memakai model ESRGAN (diunduh sekali, perlu internet, butuh perbesaran 2&times; atau lebih; latar transparan jadi putih) lalu menerapkan UHD+. <b>UHD+</b> otomatis menyalakan perbaikan warna dan pengurangan noise, lalu menambah kejernihan lokal dan warna lebih hidup. Foto dijernihkan dengan memperbesar, mempertajam, dan mengurangi noise (bukan AI). Hasilnya paling baik untuk foto yang agak buram. Wajah, teks, atau foto yang sangat buram tidak bisa dipulihkan detailnya.</p>
       <div class="err" id="perr"></div>
       <button class="btn" id="pgo"${P.file?"":" disabled"}>Proses <span>&rarr;</span></button>
       <div id="pres"></div></section>`;
@@ -614,14 +678,14 @@ function viewTool(){
     drop.addEventListener("drop",ev=>setF(ev.dataTransfer.files[0]));
     if(P.file){const fi=$("#pfi");fi.style.display="block";fi.textContent=P.file.name}
     const bindSeg=(id,key,fn)=>document.querySelectorAll("#"+id+" button").forEach(b=>b.onclick=()=>{P[key]=fn(b);document.querySelectorAll("#"+id+" button").forEach(x=>x.classList.toggle("on",x===b))});
-    bindSeg("ps","scale",b=>+b.dataset.s); bindSeg("pd","denoise",b=>+b.dataset.d); bindSeg("pa","auto",b=>+b.dataset.a);
+    bindSeg("pm","mode",b=>+b.dataset.m); bindSeg("ps","scale",b=>+b.dataset.s); bindSeg("pd","denoise",b=>+b.dataset.d); bindSeg("pa","auto",b=>+b.dataset.a);
     $("#shp").oninput=e=>{P.sharp=+e.target.value;$("#shn").textContent=P.sharp};
     $("#pgo").onclick=async()=>{
       const btn=$("#pgo"), e=$("#perr"); e.style.display="none"; btn.disabled=true;
       const say=t=>{btn.firstChild.textContent=t+" "};
       try{
         say("Memproses...");
-        const r=await enhancePhoto(P.file,{scale:P.scale,sharp:P.sharp,denoise:!!P.denoise,auto:!!P.auto},say);
+        const r=await enhancePhoto(P.file,{scale:P.scale,sharp:P.mode===2?Math.min(P.sharp,40):(P.mode?Math.max(P.sharp,70):P.sharp),denoise:!!(P.mode||P.denoise),auto:!!(P.mode||P.auto),uhd:!!P.mode,ai:P.mode===2},say);
         const png=await new Promise(res=>r.canvas.toBlob(res,"image/png"));
         const orig=URL.createObjectURL(P.file), out=URL.createObjectURL(png);
         const base=P.file.name.replace(/\.[^.]+$/,"");
@@ -634,7 +698,7 @@ function viewTool(){
             <span style="position:absolute;top:8px;right:8px;background:#f6c744;color:#111;padding:4px 10px;border-radius:10px;font-size:12px;font-weight:800">SESUDAH</span>
           </div>
           <input type="range" id="pcmp" min="0" max="100" value="50" style="width:100%;margin-top:14px;accent-color:#f6c744">
-          <small style="margin-top:8px;color:#8d8d94">Geser untuk membandingkan &middot; ${r.w}x${r.h} &middot; ${(png.size/1048576).toFixed(1)} MB (PNG)${r.limited?" &middot; ukuran dibatasi 16 MP agar HP tidak kehabisan memori":""}</small></div>
+          <small style="margin-top:8px;color:#8d8d94">Geser untuk membandingkan &middot; ${r.w}x${r.h} &middot; ${(png.size/1048576).toFixed(1)} MB (PNG)${r.ai?" &middot; AI ESRGAN":(r.aiError?" &middot; AI gagal ("+esc(r.aiError)+"), memakai UHD+":"")}${r.limited?" &middot; ukuran dibatasi 16 MP agar HP tidak kehabisan memori":""}</small></div>
           <button class="btn" id="ppng">Unduh PNG <span>&darr;</span></button>
           <button class="btn ghost" id="pjpg">Unduh JPG (lebih kecil)</button>`;
         const ba=$("#ba"), bf=$("#pbefore"), hd=$("#phd"), rg=$("#pcmp");
